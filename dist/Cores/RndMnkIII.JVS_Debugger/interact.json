@@ -1,0 +1,37 @@
+{
+    "interact": {
+        "magic": "APF_VER_1",
+        "variables": [
+            {
+                "name": "Reset Core",
+                "id": 1,
+                "type": "action",
+                "enabled": true,
+                "address": "0xF0000000",
+                "value": 1
+            },
+            {
+                "name": "Enable Analogizer",
+                "port": "MODSW",
+                "id": 2,
+                "type": "list",
+                "enabled": true,
+                "persist": true,
+                "address": "0xF2000000",
+                "defaultval": 0,
+                "mask": "0xFFFFFFFE",
+                "options": [
+                    {
+                        "name": "Off",
+                        "value": "0x0"
+                    },
+                    {
+                        "name": "On",
+                        "value": "0x1"
+                    }
+                ]
+            }
+        ],
+        "messages": []
+    }
+}

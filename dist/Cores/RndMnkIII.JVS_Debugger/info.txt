@@ -1,0 +1,5 @@
+JVS Debugger Core (2025) by Sduponch & RndMnkIII
+----------------------------------------------------------------------------
+
+This Tool allows to test several settings about JVS IO peripherals.
+

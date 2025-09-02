@@ -1,5 +1,5 @@
-//@RndMnkIII 19/11/2022
-// jvs_pkg.sv
+//@RndMnkIII 02/09/2025
+// JVS_pkg.sv
 package JVS_pkg;
     //Parameters
     parameter int unsigned MAX_JVS_NODES  = 8;

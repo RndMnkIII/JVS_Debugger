@@ -489,8 +489,9 @@ module core_top
     always_comb begin
         casex(bridge_addr)
             32'hF8xxxxxx:                                begin bridge_rd_data <= cmd_bridge_rd_data;        end // APF Bridge (Reserved)
+            32'hF2000000:                                begin bridge_rd_data <= int_bridge_rd_data;        end // Modifiers (Analogizer Enable option)
             32'hF0000000:                                begin bridge_rd_data <= int_bridge_rd_data;        end // Reset
-            {ADDRESS_ANALOGIZER_CONFIG,24'h0}:           begin bridge_rd_data <= analogizer_bridge_rd_data; end // Analogizer
+            {ADDRESS_ANALOGIZER_CONFIG,24'h0}:           begin bridge_rd_data <= analogizer_bridge_rd_data; end // analogizer.bin configuration file
             //32'hFC000000:                                begin bridge_rd_data <= int_bridge_rd_data;        end // Inputs
             default:                                     begin bridge_rd_data <= 32'h0;                     end
         endcase

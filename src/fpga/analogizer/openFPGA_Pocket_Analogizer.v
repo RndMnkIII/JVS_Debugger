@@ -211,7 +211,7 @@ module openFPGA_Pocket_Analogizer #(parameter MASTER_CLK_FREQ=50_000_000, parame
   always @(posedge i_clk) begin
 	case(snac_game_cont_type)
 		5'd0, 5'd1, 5'd2, 5'd3, 5'd4, 5'd5, 5'd6, 5'd7, 5'd8, 5'd9, 5'd10, 5'd11, 5'd12, 5'd13, 5'd14, 5'd15, 5'd20: conf_AB_r <= 1'b0; //Conf A	
-		default: r <= 1'b1; //Conf B
+		default: conf_AB_r <= 1'b1; //Conf B
 	endcase
   end
   assign conf_AB = conf_AB_r;

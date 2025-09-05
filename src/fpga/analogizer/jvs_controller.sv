@@ -38,27 +38,36 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
+import jvs_node_info_pkg::*;
+
 module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
 (
     // System clock and control signals
-    input wire i_clk,        // System clock (typically 50MHz)
-    input wire i_rst,        // Asynchronous reset (active high)
-    input wire i_ena,        // Module enable (active high)
-    input wire i_stb,        // Strobe signal (not used in final version)
+    input logic i_clk,        // System clock (typically 50MHz)
+    input logic i_rst,        // Asynchronous reset (active high)
+    input logic i_ena,        // Module enable (active high)
+    input logic i_stb,        // Strobe signal (not used in final version)
     
     // UART interface signals for RS485 communication
-    input wire i_uart_rx,    // Serial data received from JVS device
-    output wire o_uart_tx,   // Serial data transmitted to JVS device
-    input wire i_sense,      // JVS SENSE line (read-only for master)
-    output wire o_rx485_dir, // RS485 transceiver direction control (0=RX, 1=TX)
+    input logic i_uart_rx,    // Serial data received from JVS device
+    output logic o_uart_tx,   // Serial data transmitted to JVS device
+    input logic i_sense,      // JVS SENSE line (read-only for master)
+    output logic o_rx485_dir, // RS485 transceiver direction control (0=RX, 1=TX)
     
     // Output registers compatible with Analogue Pocket SNAC format
-    output reg [15:0] p1_btn_state,   // Player 1 button states
-    output reg [31:0] p1_joy_state,   // Player 1 analog stick states
-    output reg [15:0] p2_btn_state,   // Player 2 button states
-    output reg [31:0] p2_joy_state,   // Player 2 analog stick states
-    output reg [15:0] p3_btn_state,   // Player 3 button states (reserved)
-    output reg [15:0] p4_btn_state    // Player 4 button states (reserved)
+    output logic [15:0] p1_btn_state,   // Player 1 button states
+    output logic [31:0] p1_joy_state,   // Player 1 analog stick states
+    output logic [15:0] p2_btn_state,   // Player 2 button states
+    output logic [31:0] p2_joy_state,   // Player 2 analog stick states
+    output logic [15:0] p3_btn_state,   // Player 3 button states (reserved)
+    output logic [15:0] p4_btn_state,    // Player 4 button states (reserved)
+
+    //JVS node information structure
+    output logic jvs_data_ready,
+    output jvs_node_info_t jvs_nodes,
+    //RAM interface for node names (for debug/display purposes)
+    output logic [7:0] node_name_rd_data,
+    input logic [6:0] node_name_rd_addr
 );
 
     //=========================================================================
@@ -72,10 +81,10 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // UART TRANSMITTER INSTANCE
     //=========================================================================
     // Control signals for UART transmitter
-    reg uart_tx_dv;              // Data valid strobe to start transmission
-    reg [7:0] uart_tx_byte;      // Byte to transmit
-    wire uart_tx_active;         // High when transmission is in progress
-    wire uart_tx_done;           // Pulse when transmission completes
+    logic uart_tx_dv;              // Data valid strobe to start transmission
+    logic [7:0] uart_tx_byte;      // Byte to transmit
+    logic uart_tx_active;         // High when transmission is in progress
+    logic uart_tx_done;           // Pulse when transmission completes
     
     // Instantiate UART transmitter module
     uart_tx #(.CLKS_PER_BIT(UART_CLKS_PER_BIT)) uart_tx_inst (
@@ -105,6 +114,17 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     //=========================================================================
     // JVS PROTOCOL CONSTANTS
     //=========================================================================
+
+    // Common delay timings (in clock cycles at MASTER_CLK_FREQ)
+    localparam logic [31:0] INIT_DELAY_COUNT = MASTER_CLK_FREQ * 5.4; // 5.4 seconds
+    localparam logic [31:0] FIRST_RESET_DELAY_COUNT = MASTER_CLK_FREQ * 2; // 2 seconds
+    localparam logic [31:0] SECOND_RESET_DELAY_COUNT = MASTER_CLK_FREQ / 2; // 0.5 seconds
+    localparam logic [15:0] TX_SETUP_DELAY_COUNT = MASTER_CLK_FREQ / 100_000; // ~10µs
+    localparam logic [15:0] TX_HOLD_DELAY_COUNT = MASTER_CLK_FREQ / 33_333; // ~30µs
+    localparam logic [31:0] RX_TIMEOUT_COUNT = MASTER_CLK_FREQ / 100; // 10ms
+    localparam logic [31:0] POLL_INTERVAL_COUNT = MASTER_CLK_FREQ / 1_000; // 1ms
+
+
     // Standard JVS protocol bytes as defined in JAMMA specification
     localparam JVS_SYNC_BYTE = 8'hE0;        // Frame start synchronization byte
     localparam JVS_BROADCAST_ADDR = 8'hFF;   // Broadcast address for all devices
@@ -138,8 +158,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam TX_BUFFER_SIZE = 24;          // Size of TX buffer (max frame ~21 bytes)
     
     // JVS node management constants
-    localparam MAX_JVS_NODES = 2;            // Maximum supported JVS nodes (current implementation)
-    localparam NODE_NAME_SIZE = 100;         // Maximum size for node identification strings (per JVS spec)
+    //localparam MAX_JVS_NODES = 2;            // Maximum supported JVS nodes (current implementation)
+    //localparam NODE_NAME_SIZE = 100;         // Maximum size for node identification strings (per JVS spec)
+    // Defined in jvs_node_info_pkg.sv
 
     //=========================================================================
     // STATE MACHINE DEFINITIONS
@@ -184,43 +205,75 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // STATE VARIABLES AND CONTROL REGISTERS
     //=========================================================================
     // Current state for each state machine
-    reg [4:0] main_state;        // Main protocol state
-    reg [1:0] rs485_state;       // RS485 transceiver state
-    reg [2:0] rx_state;          // Receive frame processing state
+    logic [4:0] main_state;        // Main protocol state
+    logic [1:0] rs485_state;       // RS485 transceiver state
+    logic [2:0] rx_state;          // Receive frame processing state
     
     // Transmission buffer and control
-    reg [7:0] tx_buffer [0:TX_BUFFER_SIZE-1];  // Buffer for outgoing JVS frames
-    reg [7:0] tx_length;         // Total length of current transmission
-    reg [7:0] tx_counter;        // Current byte position in transmission
-    reg [7:0] tx_checksum;       // Running checksum calculation
-    reg rs485_tx_request;        // Signal to start RS485 transmission
+    logic [7:0] tx_buffer [0:TX_BUFFER_SIZE-1];  // Buffer for outgoing JVS frames
+    logic [7:0] tx_length;         // Total length of current transmission
+    logic [7:0] tx_counter;        // Current byte position in transmission
+    logic [7:0] tx_checksum;       // Running checksum calculation
+    logic rs485_tx_request;        // Signal to start RS485 transmission
     
     // Reception buffer and control
-    reg [7:0] rx_buffer_raw [0:RX_BUFFER_SIZE-1]; // Buffer for raw incoming JVS frames with escape sequences
-    reg [7:0] rx_buffer [0:RX_BUFFER_SIZE-1]; // Buffer for unescaped JVS frames (final processed data)
-    reg [7:0] rx_length;         // Length of current incoming frame
-    reg [7:0] rx_counter;        // Current byte position in reception
-    reg [7:0] rx_checksum;       // Running checksum verification
+    logic [7:0] rx_buffer_raw [0:RX_BUFFER_SIZE-1]; // Buffer for raw incoming JVS frames with escape sequences
+    logic [7:0] rx_buffer [0:RX_BUFFER_SIZE-1]; // Buffer for unescaped JVS frames (final processed data)
+    logic [7:0] rx_length;         // Length of current incoming frame
+    logic [7:0] rx_counter;        // Current byte position in reception
+    logic [7:0] rx_checksum;       // Running checksum verification
     // Generic copy variables (used for unescape and name copying)
-    reg [7:0] copy_read_idx;      // Read index for copy operations
-    reg [7:0] copy_write_idx;     // Write index for copy operations
+    logic [7:0] copy_read_idx;      // Read index for copy operations
+    logic [7:0] copy_write_idx;     // Write index for copy operations
 
     // Timing and protocol control
-    reg [31:0] delay_counter;    // Multi-purpose delay counter
-    reg [31:0] timeout_counter;  // Timeout counter for waiting states
-    reg [31:0] poll_timer;       // Timer for input polling frequency
-    reg [7:0] current_device_addr; // Address assigned to JVS device (usually 0x01)
-    reg rx_frame_complete;       // Flag indicating frame has been processed and ready for next step
-    reg [4:0] last_tx_state;     // Tracks the last command sent for response handling
+    logic [31:0] delay_counter;    // Multi-purpose delay counter
+    logic [31:0] timeout_counter;  // Timeout counter for waiting states
+    logic [31:0] poll_timer;       // Timer for input polling frequency
+    logic [7:0] current_device_addr; // Address assigned to JVS device (usually 0x01)
+    logic rx_frame_complete;       // Flag indicating frame has been processed and ready for next step
+    logic [4:0] last_tx_state;     // Tracks the last command sent for response handling
     
     //=========================================================================
     // JVS NODE INFORMATION STRUCTURES
     //=========================================================================
     // Structure to store information about each JVS node
-    reg [7:0] node_name [0:MAX_JVS_NODES-1][0:NODE_NAME_SIZE-1]; // Node identification strings
-    reg [7:0] node_cmd_ver [0:MAX_JVS_NODES-1];    // Command version for each node
-    reg [7:0] node_jvs_ver [0:MAX_JVS_NODES-1];    // JVS version for each node  
-    reg [7:0] node_com_ver [0:MAX_JVS_NODES-1];    // Communication version for each node
+    //jvs_node_info_t jvs_nodes;
+
+    // logic [7:0] node_name [0:MAX_JVS_NODES-1][0:NODE_NAME_SIZE-1]; // Node identification strings
+    // logic [7:0] node_cmd_ver [0:MAX_JVS_NODES-1];    // Command version for each node
+    // logic [7:0] node_jvs_ver [0:MAX_JVS_NODES-1];    // JVS version for each node  
+    // logic [7:0] node_com_ver [0:MAX_JVS_NODES-1];    // Communication version for each node
+
+    //initialze jvs_nodes
+    jvs_node_info_t jvs_nodes_r, jvs_nodes_r2;
+    
+    localparam jvs_node_info_t JVS_INFO_INIT = '{
+        node_cmd_ver: '{8'h13, 8'h11}, 
+        node_jvs_ver: '{8'h30, 8'h30},  
+        node_com_ver: '{8'h10, 8'h10}   
+    };
+
+    logic jvs_data_ready_init, jvs_data_ready_joy;
+
+    // Combined data ready signal indicating new data available from either initialization or input polling
+    assign jvs_data_ready = jvs_data_ready_init | jvs_data_ready_joy;
+    
+    //assign jvs_nodes = jvs_nodes_r2;
+    assign jvs_nodes = jvs_nodes_r;
+
+    // RAM for current node name during reception
+    (* ramstyle = "M10K" *) logic [7:0] node_name_ram [0:jvs_node_info_pkg::NODE_NAME_SIZE -1];
+
+    //initial content for debug purposes
+    initial begin
+        $readmemh("jvs_device_name.mem", node_name_ram); //null terminated string "namco ltd.;NAJV2;Ver1.00;JPN,Multipurpose."
+    end
+
+    //infer simple dual-port RAM for node name reading
+    always_ff @(posedge i_clk) begin
+        node_name_rd_data <= node_name_ram[node_name_rd_addr];
+    end
     
     //=========================================================================
     // RS485 DIRECTION CONTROL
@@ -237,7 +290,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Manages RS485 transceiver direction with proper setup and hold timing
     // This is critical for reliable RS485 communication
     
-    reg [15:0] rs485_setup_counter; // Counter for timing delays
+    logic [15:0] rs485_setup_counter; // Counter for timing delays
     
     always @(posedge i_clk) begin
         if (i_rst || !i_ena) begin
@@ -256,7 +309,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                 RS485_TX_SETUP: begin
                     // Setup time: ~10µs (500 cycles at 50MHz)
                     // This allows the RS485 transceiver to stabilize before data transmission
-                    if (rs485_setup_counter < 16'd500) begin
+                    //if (rs485_setup_counter < 16'd500) begin
+                     if (rs485_setup_counter < TX_SETUP_DELAY_COUNT) begin
                         rs485_setup_counter <= rs485_setup_counter + 1;
                     end else begin
                         rs485_setup_counter <= 16'h0;
@@ -274,7 +328,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                 RS485_TX_HOLD: begin
                     // Hold TX mode after transmission (~30µs)
                     // This ensures the last bit is fully transmitted before switching to receive
-                    if (rs485_setup_counter < 16'd1500) begin
+                    //if (rs485_setup_counter < 16'd1500) begin
+                    if (rs485_setup_counter < TX_HOLD_DELAY_COUNT) begin
                         rs485_setup_counter <= rs485_setup_counter + 1;
                     end else begin
                         rs485_setup_counter <= 16'h0;
@@ -291,6 +346,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Implements the complete JVS initialization sequence and input polling
     
     always @(posedge i_clk) begin
+
+        jvs_data_ready_init <= 1'b0;
+
         if (i_rst || !i_ena) begin
             // Initialize all state variables on reset
             main_state <= STATE_INIT_DELAY;
@@ -311,7 +369,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     
                     // Fast polling timer for inputs - 1ms interval
                     // This provides responsive gaming experience with minimal latency
-                    if (poll_timer < 32'h0C350) begin  // 50,000 cycles = 1ms at 50MHz
+                    //if (poll_timer < 32'h0C350) begin  // 50,000 cycles = 1ms at 50MHz
+                    if (poll_timer < POLL_INTERVAL_COUNT) begin  // 1ms
                         poll_timer <= poll_timer + 1;
                     end else begin
                         poll_timer <= 32'h0;
@@ -326,7 +385,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     rs485_tx_request <= 1'b0;
                     // Initial delay for core I/O initialization - 5.4 seconds
                     // This ensures the FPGA core and external circuits are fully stable
-                    if (delay_counter < 32'h10000000) begin  // 268,435,456 cycles ≈ 5.4s at 50MHz
+                    //if (delay_counter < 32'h10000000) begin  // 268,435,456 cycles ≈ 5.4s at 50MHz
+                    if (delay_counter < INIT_DELAY_COUNT) begin  // 5.4 seconds
                         delay_counter <= delay_counter + 1;
                     end else begin
                         delay_counter <= 32'h0;
@@ -357,7 +417,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     rs485_tx_request <= 1'b0;
                     // 2 second delay after first RESET
                     // Allows JVS devices to complete their reset sequence
-                    if (delay_counter < 32'h6000000) begin  // 100,663,296 cycles = 2s at 50MHz
+                    //if (delay_counter < 32'h6000000) begin  // 100,663,296 cycles = 2s at 50MHz
+                    if (delay_counter <FIRST_RESET_DELAY_COUNT) begin  //   2 seconds
                         delay_counter <= delay_counter + 1;
                     end else begin
                         delay_counter <= 32'h0;
@@ -387,7 +448,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     rs485_tx_request <= 1'b0;
                     // 500ms delay after second RESET
                     // Shorter delay as devices should be ready after two resets
-                    if (delay_counter < 32'h1800000) begin  // 25,165,824 cycles = 500ms at 50MHz
+                    //if (delay_counter < 32'h1800000) begin  // 25,165,824 cycles = 500ms at 50MHz
+                    if (delay_counter < SECOND_RESET_DELAY_COUNT) begin  // 500ms
                         delay_counter <= delay_counter + 1;
                     end else begin
                         delay_counter <= 32'h0;
@@ -605,11 +667,15 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             CMD_CMDREV: main_state <= STATE_SEND_JVSREV;     // Command revision read, get JVS revision
                             CMD_JVSREV: main_state <= STATE_SEND_COMMVER;    // JVS revision read, get comm version
                             CMD_COMMVER: main_state <= STATE_SEND_FEATCHK;   // Comm version read, check features
-                            CMD_FEATCHK: main_state <= STATE_IDLE;           // Features checked, start polling
+                            CMD_FEATCHK: begin
+                                jvs_data_ready_init <= 1'b1;               // Indicate initialization complete
+                                main_state <= STATE_IDLE;           // Features checked, start polling
+                            end
                             CMD_READ_INPUTS: main_state <= STATE_IDLE;       // Inputs read, continue polling
                             default: main_state <= STATE_IDLE;
                         endcase
-                    end else if (timeout_counter < 32'h0C3500) begin  // 10ms timeout - fast for responsive gaming
+                    //end else if (timeout_counter < 32'h0C3500) begin  // 10ms timeout - fast for responsive gaming
+                    end else if (timeout_counter < RX_TIMEOUT_COUNT) begin  // 10ms timeout - fast for responsive gaming
                         timeout_counter <= timeout_counter + 1;
                     end else begin
                         // Timeout handling - different strategies for different commands
@@ -636,6 +702,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Handles byte-by-byte reception of JVS frames with checksum validation
     
     always @(posedge i_clk) begin
+        jvs_nodes_r2 <= JVS_INFO_INIT; //initialize jvs_nodes
+        jvs_data_ready_joy <= 1'b0;
+
         if (i_rst || !i_ena) begin
             // Initialize RX state machine and output registers
             rx_state <= RX_IDLE;
@@ -651,6 +720,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             p2_joy_state <= 32'h80808080;
             p3_btn_state <= 16'h0000;
             p4_btn_state <= 16'h0000;
+
+            
         end else begin
             // Clear frame complete flag when main state machine processes it
             if (main_state != STATE_WAIT_RX) begin
@@ -777,23 +848,26 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             // RX_COPY_NAME - Copy node name from READ ID response
             //-------------------------------------------------------------
             if (rx_state == RX_COPY_NAME) begin
-                if (copy_read_idx < (JVS_OVERHEAD + rx_buffer[JVS_LENGTH_POS]) && copy_write_idx < NODE_NAME_SIZE - 1) begin
+                if (copy_read_idx < (JVS_OVERHEAD + rx_buffer[JVS_LENGTH_POS]) && copy_write_idx < jvs_node_info_pkg::NODE_NAME_SIZE - 1) begin
                     // Check for null terminator
                     if (rx_buffer[copy_read_idx] == 8'h00) begin
                         // Found null terminator, finish copying
-                        node_name[current_device_addr - 1][copy_write_idx] <= 8'h00;
+                        //jvs_nodes.node_name[current_device_addr - 1][copy_write_idx] <= 8'h00;
+                        node_name_ram[copy_write_idx] <= 8'h00; // Also update RAM
                         rx_frame_complete <= 1'b1;     // Signal frame complete to main state machine
                         rx_counter <= 8'h00;           // Reset counter for next frame
                         rx_state <= RX_IDLE;           // Return to idle for next frame
                     end else begin
                         // Copy character and advance indices
-                        node_name[current_device_addr - 1][copy_write_idx] <= rx_buffer[copy_read_idx];
+                        //jvs_nodes.node_name[current_device_addr - 1][copy_write_idx] <= rx_buffer[copy_read_idx];
+                        node_name_ram[copy_write_idx] <= rx_buffer[copy_read_idx]; // Also update RAM
                         copy_read_idx <= copy_read_idx + 1;
                         copy_write_idx <= copy_write_idx + 1;
                     end
                 end else begin
                     // Reached end of buffer or max name size, null terminate and finish
-                    node_name[current_device_addr - 1][copy_write_idx] <= 8'h00;
+                    //jvs_nodes.node_name[current_device_addr - 1][copy_write_idx] <= 8'h00;
+                    node_name_ram[copy_write_idx] <= 8'h00; // Also update RAM
                     rx_frame_complete <= 1'b1;     // Signal frame complete to main state machine
                     rx_counter <= 8'h00;           // Reset counter for next frame
                     rx_state <= RX_IDLE;           // Return to idle for next frame
@@ -811,7 +885,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         // Example: "namco ltd.;NAJV2;Ver1.00;JPN,Multipurpose."
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
                             // Trigger name copying for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= MAX_JVS_NODES) begin
+                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
                                 // Setup name copying: rx_buffer format [E0][00][LEN][01][01][name...][00][checksum]
                                 copy_read_idx <= JVS_DATA_START + 2;    // Start after status and report bytes
                                 copy_write_idx <= 8'd0;                 // Start writing at beginning of name array
@@ -830,8 +904,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         // Current expected revision is 1.3, so YY should be 0x13
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
                             // Store command revision for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= MAX_JVS_NODES) begin
-                                node_cmd_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
+                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                jvs_nodes_r.node_cmd_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
                             end
                         end
                         // Command processed, signal completion
@@ -845,8 +919,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         // Current expected revision is 3.0, so YY should be 0x30
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
                             // Store JVS revision for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= MAX_JVS_NODES) begin
-                                node_jvs_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
+                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                jvs_nodes_r.node_jvs_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
                             end
                         end
                         // Command processed, signal completion
@@ -860,8 +934,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         // Current expected version is 1.0, so YY should be 0x10  
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
                             // Store communication version for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= MAX_JVS_NODES) begin
-                                node_com_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains version
+                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                jvs_nodes_r.node_com_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains version
                             end
                         end
                         // Command processed, signal completion
@@ -995,6 +1069,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             end
                         end
                         // Input processing complete, signal completion
+                        jvs_data_ready_joy <= 1'b1; // Indicate new input data available
                         rx_frame_complete <= 1'b1;
                         rx_counter <= 8'h00;
                         rx_state <= RX_IDLE;

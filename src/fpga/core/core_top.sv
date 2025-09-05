@@ -586,13 +586,13 @@ module core_top
         .field                    ( 0                        ), // [i]
         .interlaced               ( 0                        ), // [i]
         // Input Video from Core
-        .core_r                   ( video_rgb_jvs[23:16]    ), // [i]
-        .core_g                   ( video_rgb_jvs[15:8]     ), // [i]
-        .core_b                   ( video_rgb_jvs[7:0]      ), // [i]
-        .core_hs                  ( HS_out               ), // [i]
-        .core_vs                  ( VS_out               ), // [i]
-        .core_hb                  ( HB_out              ), // [i]
-        .core_vb                  ( VB_out             ), // [i]
+        .core_r                   ( video_rgb_jvs[23:16]     ), // [i]
+        .core_g                   ( video_rgb_jvs[15:8]      ), // [i]
+        .core_b                   ( video_rgb_jvs[7:0]       ), // [i]
+        .core_hs                  ( OSD_out_Hsync            ), // [i]
+        .core_vs                  ( OSD_out_Vsync            ), // [i]
+        .core_hb                  ( OSD_out_Hblank           ), // [i]
+        .core_vb                  ( OSD_out_Vblank           ), // [i]
         // Output to Display
         .video_rgb                ( video_rgb                ), // [o]
         .video_hs                 ( video_hs                 ), // [o]
@@ -611,29 +611,6 @@ module core_top
     wire              ioctl_wr;
     wire [DIO_AW-1:0] ioctl_addr;
     wire [DIO_DW-1:0] ioctl_data;
-
-    // data_io #(.MASK(DIO_MASK),.AW(DIO_AW),.DW(DIO_DW),.DELAY(DIO_DELAY),.HOLD(DIO_HOLD)) u_pocket_data_io
-    // (
-    //     // Clocks and Reset
-    //     .clk_74a                  ( clk_74a                  ), // [i]
-    //     .clk_memory               ( clk_sys                  ), // [i]
-    //     // Pocket Bridge Slots
-    //     .dataslot_requestwrite    ( dataslot_requestwrite    ), // [i]
-    //     .dataslot_requestwrite_id ( dataslot_requestwrite_id ), // [i]
-    //     .dataslot_allcomplete     ( dataslot_allcomplete     ), // [i]
-    //     // MPU -> FPGA (MPU Write to FPGA)
-    //     // Pocket Bridge
-    //     .bridge_endian_little     ( bridge_endian_little     ), // [i]
-    //     .bridge_addr              ( bridge_addr              ), // [i]
-    //     .bridge_wr                ( bridge_wr                ), // [i]
-    //     .bridge_wr_data           ( bridge_wr_data           ), // [i]
-    //     // Controller Interface
-    //     .ioctl_download           ( ioctl_download           ), // [o]
-    //     .ioctl_index              ( ioctl_index              ), // [o]
-    //     .ioctl_wr                 ( ioctl_wr                 ), // [o]
-    //     .ioctl_addr               ( ioctl_addr               ), // [o]
-    //     .ioctl_data               ( ioctl_data               )  // [o]
-    // );  
 
 //! ------------------------------------------------------------------------
     //! Clocks
@@ -666,6 +643,14 @@ logic hblank_core, vblank_core;
 logic hsync_core, vsync_core;
 logic ce_pixel_core;
 
+logic [7:0] OSD_out_R;
+logic [7:0] OSD_out_G;
+logic [7:0] OSD_out_B;
+logic OSD_out_Hblank;
+logic OSD_out_Vblank;
+logic OSD_out_Hsync;
+logic OSD_out_Vsync;
+
 video_sync_gen_320x240_6mhz_pixclk_en vidsync(
   .clk48(clk_sys), 
   .rst(reset),
@@ -689,116 +674,7 @@ video_sync_gen_320x240_6mhz_pixclk_en vidsync(
 
     //create aditional switch to blank Pocket screen.
     wire [23:0] video_rgb_jvs;
-    assign video_rgb_jvs = (pocket_blank_screen && analogizer_ena) ? 24'h000000: {RGB_out_R,RGB_out_G,RGB_out_B};
-    //assign video_rgb_jvs = (pocket_blank_screen && analogizer_ena) ? 24'h000000: {video_r_core,video_g_core,video_b_core};
-
-    //switch between Analogizer SNAC and Pocket Controls for P1-P4 (P3,P4 when uses PCEngine Multitap)
-    wire [15:0] p1_btn, p2_btn, p3_btn, p4_btn;
-    wire [31:0] p1_joy, p2_joy;
-    reg [31:0] p1_joystick, p2_joystick;
-    reg  [15:0] p1_controls, p2_controls;
-
-    wire snac_is_analog = (snac_game_cont_type == 5'h12) || (snac_game_cont_type == 5'h13);
-
-    //! Player 1 ---------------------------------------------------------------------------
-    reg p1_up, p1_down, p1_left, p1_right;
-    wire p1_up_analog, p1_down_analog, p1_left_analog, p1_right_analog;
-    //using left analog joypad
-    assign p1_up_analog    = (p1_joy[15:8] < 8'h40) ? 1'b1 : 1'b0; //analog range UP 0x00 Idle 0x7F DOWN 0xFF, DEADZONE +- 0x15
-    assign p1_down_analog  = (p1_joy[15:8] > 8'hC0) ? 1'b1 : 1'b0; 
-    assign p1_left_analog  = (p1_joy[7:0]  < 8'h40) ? 1'b1 : 1'b0; //analog range LEFT 0x00 Idle 0x7F RIGHT 0xFF, DEADZONE +- 0x15
-    assign p1_right_analog = (p1_joy[7:0]  > 8'hC0) ? 1'b1 : 1'b0;
-
-    always @(posedge clk_74a) begin
-        p1_up    <= (snac_is_analog) ? p1_up_analog    : p1_btn[0];
-        p1_down  <= (snac_is_analog) ? p1_down_analog  : p1_btn[1];
-        p1_left  <= (snac_is_analog) ? p1_left_analog  : p1_btn[2];
-        p1_right <= (snac_is_analog) ? p1_right_analog : p1_btn[3];
-    end
-    //! Player 2 ---------------------------------------------------------------------------
-    reg p2_up, p2_down, p2_left, p2_right;
-    wire p2_up_analog, p2_down_analog, p2_left_analog, p2_right_analog;
-    //using left analog joypad
-    assign p2_up_analog    = (p2_joy[15:8] < 8'h40) ? 1'b1 : 1'b0; //analog range UP 0x00 Idle 0x7F DOWN 0xFF, DEADZONE +- 0x15
-    assign p2_down_analog  = (p2_joy[15:8] > 8'hC0) ? 1'b1 : 1'b0; 
-    assign p2_left_analog  = (p2_joy[7:0]  < 8'h40) ? 1'b1 : 1'b0; //analog range LEFT 0x00 Idle 0x7F RIGHT 0xFF, DEADZONE +- 0x15
-    assign p2_right_analog = (p2_joy[7:0]  > 8'hC0) ? 1'b1 : 1'b0;
-
-    always @(posedge clk_74a) begin
-        p2_up    <= (snac_is_analog) ? p2_up_analog    : p2_btn[0];
-        p2_down  <= (snac_is_analog) ? p2_down_analog  : p2_btn[1];
-        p2_left  <= (snac_is_analog) ? p2_left_analog  : p2_btn[2];
-        p2_right <= (snac_is_analog) ? p2_right_analog : p2_btn[3];
-    end
-    always @(posedge clk_74a) begin
-        reg [31:0] p1_pocket_btn, p1_pocket_joy;
-        reg [31:0] p2_pocket_btn, p2_pocket_joy;
-
-        if((snac_game_cont_type == 5'h0) || !analogizer_ena) begin //SNAC is disabled
-        //if((snac_game_cont_type == 5'h0)) begin //SNAC is disabled
-            p1_controls <= cont1_key;
-            p2_controls <= cont2_key;
-        end
-        else begin
-        case(snac_cont_assignment[1:0])
-        2'h0:    begin  //SNAC P1 -> Pocket P1
-            p1_controls <= {p1_btn[15:4],p1_right,p1_left,p1_down,p1_up};
-            p2_controls <= cont1_key;
-            end
-        2'h1: begin  //SNAC P1 -> Pocket P2
-            p1_controls <= cont1_key;
-            p2_controls <= p1_btn;
-            end
-        2'h2: begin //SNAC P1 -> Pocket P1, SNAC P2 -> Pocket P2
-            p1_controls <= {p1_btn[15:4],p1_right,p1_left,p1_down,p1_up};
-            p2_controls <= {p2_btn[15:4],p2_right,p2_left,p2_down,p2_up};
-            end
-        2'h3: begin //SNAC P1 -> Pocket P2, SNAC P2 -> Pocket P1
-            p1_controls <= {p2_btn[15:4],p2_right,p2_left,p2_down,p2_up};
-            p2_controls <= {p1_btn[15:4],p1_right,p1_left,p1_down,p1_up};
-            end
-        default: begin 
-            p1_controls <= cont1_key;
-            p2_controls <= cont2_key;
-            end
-        endcase
-        end
-    end
-
-    wire [15:0] p1_btn_CK, p2_btn_CK;
-    wire [31:0] p1_joy_CK, p2_joy_CK;
-    synch_3 #(
-    .WIDTH(16)
-    ) p1b_s (
-        p1_btn_CK,
-        p1_btn,
-        clk_74a
-    );
-
-    synch_3 #(
-        .WIDTH(16)
-    ) p2b_s (
-        p2_btn_CK,
-        p2_btn,
-        clk_74a
-    );
-
-    synch_3 #(
-    .WIDTH(32)
-    ) p3b_s (
-        p1_joy_CK,
-        p1_joy,
-        clk_74a
-    );
-        
-    synch_3 #(
-        .WIDTH(32)
-    ) p4b_s (
-        p2_joy_CK,
-        p2_joy,
-        clk_74a
-    );
-
+    assign video_rgb_jvs = (pocket_blank_screen && analogizer_ena) ? 24'h000000: {OSD_out_R, OSD_out_G, OSD_out_B};
 
     // Video Y/C Encoder settings
     // Follows the Mike Simone Y/C encoder settings:
@@ -831,47 +707,7 @@ video_sync_gen_320x240_6mhz_pixclk_en vidsync(
         COLORBURST_RANGE <= {COLORBURST_START1, COLORBURST_NTSC_END1, COLORBURST_PAL_END1};
     end
 
-    logic start_r, up_r, down_r, left_r, right_r, btnA_r, p1r1_r, p2r1_r;
-
-    always_ff @(posedge clk_sys) begin 
-       start_r <= p1_controls[15];
-       up_r    <= p1_controls[0];
-       down_r  <= p1_controls[1];
-       left_r  <= p1_controls[2];
-       right_r <= p1_controls[3]; 
-       btnA_r  <= p1_controls[4];
-       p1r1_r    <= p1_controls[9]; //R1 button toggles credits
-       p2r1_r    <= p2_controls[9]; //R1 button toggles credits
-
-    end
-
-    //Debug OSD: shows Xoffset and Yoffset values and the detected video resolution for Analogizer
-    wire [7:0] RGB_out_R, RGB_out_G, RGB_out_B;
-    wire HS_out, VS_out, HB_out, VB_out;
-
-   osd_top #(
-   .CLK_HZ(48_000_000)
-   ) osd_debug_inst (
-       .clk(clk_sys),
-       .reset(reset),
-       .pixel_ce(ce_pixel_core),
-       .R_in(8'h00),
-       .G_in(8'h00),
-       .B_in(8'h00),
-       .hsync_in(hsync_core),
-       .vsync_in(vsync_core),
-       .hblank(hblank_core),
-       .vblank(vblank_core),
-       .R_out(RGB_out_R),
-       .G_out(RGB_out_G),
-       .B_out(RGB_out_B),
-       .hsync_out(HS_out),
-       .vsync_out(VS_out),
-       .hblank_out(HB_out),
-       .vblank_out(VB_out)
-   );
-
-    //32_000_000
+    //48_000_000
     wire [31:0] analogizer_bridge_rd_data;
     wire busy;
     wire VIDEO_DE = ~(hblank_core | vblank_core);
@@ -884,13 +720,22 @@ video_sync_gen_320x240_6mhz_pixclk_en vidsync(
 
         //Video interface
         .video_clk(clk_sys),
-        .R(RGB_out_R),
-        .G(RGB_out_G),
-        .B(RGB_out_B),
-        .Hblank(HB_out),
-        .Vblank(VB_out),
-        .Hsync(HS_out), //composite SYNC on HSync.
-        .Vsync(VS_out),
+        .R(8'h00),
+        .G(8'h00),
+        .B(8'h00),
+        .Hblank(hblank_core),
+        .Vblank(vblank_core),
+        .Hsync(hsync_core), //composite SYNC on HSync.
+        .Vsync(vsync_core),
+
+        //OSD out
+        .OSD_out_R(OSD_out_R),
+        .OSD_out_G(OSD_out_G),
+        .OSD_out_B(OSD_out_B),
+        .OSD_out_Hblank(OSD_out_Hblank),
+        .OSD_out_Vblank(OSD_out_Vblank),
+        .OSD_out_Hsync(OSD_out_Hsync),
+        .OSD_out_Vsync(OSD_out_Vsync),
 
         //openFPGA Bridge interface
         .bridge_endian_little(bridge_endian_little),
@@ -920,10 +765,10 @@ video_sync_gen_320x240_6mhz_pixclk_en vidsync(
         .scandoubler(1'b1), //logic for disable/enable the scandoubler
 
         //SNAC interface
-        .p1_btn_state(p1_btn_CK),
-        .p1_joy_state(p1_joy_CK),
-        .p2_btn_state(p2_btn_CK),  
-        .p2_joy_state(p2_joy_CK),
+        .p1_btn_state(),
+        .p1_joy_state(),
+        .p2_btn_state(),  
+        .p2_joy_state(),
         .p3_btn_state(),
         .p4_btn_state(),  
         .busy(busy),    

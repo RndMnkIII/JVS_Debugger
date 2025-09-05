@@ -1,0 +1,114 @@
+F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_init_fsm_dyn.sv {2 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_init_fsm_dyn.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_init_fsm_dyn
+-- Importing package osd_cmd_pkg
+** Warning: F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_init_fsm_dyn.sv(28): (vlog-13314) Defaulting port 'prog_cmd' kind to 'var' rather than 'wire' due to default compile option setting of -svinputport=relaxed.
+
+Top level modules:
+	osd_init_fsm_dyn
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_str_writer.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_str_writer.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_str_writer
+
+Top level modules:
+	osd_str_writer
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_udec_writer_seq.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_udec_writer_seq.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_udec_writer_seq
+
+Top level modules:
+	osd_udec_writer_seq
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_writer.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_writer.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_writer
+-- Importing package osd_cmd_pkg
+-- Compiling module osd_demo_str_rom
+
+Top level modules:
+	osd_writer
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_1c.sv {1 {vlog -work work -vopt -sv -stats=none F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_1c.sv
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module rowcol_to_addr_1c
+
+Top level modules:
+	rowcol_to_addr_1c
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_hex_writer.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_hex_writer.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_hex_writer
+-- Importing package osd_format_pkg
+
+Top level modules:
+	osd_hex_writer
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/tb_osd_writer.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\tb_osd_writer.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module tb_osd_writer
+
+Top level modules:
+	tb_osd_writer
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_pipe.sv {1 {vlog -work work -vopt -sv -stats=none F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_pipe.sv
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module rowcol_to_addr_pipe
+
+Top level modules:
+	rowcol_to_addr_pipe
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_format_pkg.sv {1 {vlog -work work -vopt -sv -stats=none F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_format_pkg.sv
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling package osd_format_pkg
+
+Top level modules:
+	--none--
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_textbuf.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_textbuf.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_textbuf
+
+Top level modules:
+	osd_textbuf
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_print_dispatcher.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_print_dispatcher.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_print_dispatcher
+
+Top level modules:
+	osd_print_dispatcher
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_sdec_writer.sv {1 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_sdec_writer.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_sdec_writer
+
+Top level modules:
+	osd_sdec_writer
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_bin_writer.sv {1 {vlog -work work -vopt -sv -stats=none F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_bin_writer.sv
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_bin_writer
+-- Importing package osd_format_pkg
+
+Top level modules:
+	osd_bin_writer
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_pkg.sv {1 {vlog -work work -vopt -sv -stats=none F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_pkg.sv
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling package osd_cmd_pkg
+
+Top level modules:
+	--none--
+
+} {} {}} F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_batch_enqueuer.sv {2 {vlog -work work -vopt -sv -stats=none {F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_cmd_batch_enqueuer.sv}
+QuestaSim-64 vlog 10.7c Compiler 2018.08 Aug 18 2018
+-- Compiling module osd_cmd_batch_enqueuer
+-- Importing package osd_cmd_pkg
+** Warning: F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_cmd_batch_enqueuer.sv(13): (vlog-13314) Defaulting port 'load_data' kind to 'var' rather than 'wire' due to default compile option setting of -svinputport=relaxed.
+
+Top level modules:
+	osd_cmd_batch_enqueuer
+
+} {} {}}

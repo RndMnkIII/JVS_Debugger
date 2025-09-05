@@ -70,12 +70,15 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
+import jvs_node_info_pkg::*;
+
 module openFPGA_Pocket_Analogizer #(parameter MASTER_CLK_FREQ=50_000_000, parameter LINE_LENGTH, parameter ADDRESS_ANALOGIZER_CONFIG=8'hF7) (
 	input  wire clk_74a,
 	input  wire i_clk,
 	input  wire i_rst_apf, //active High
     input  wire i_rst_core,//active High
 	input  wire i_ena,
+
 	//Video interface
 	input  wire video_clk,
 	input  wire [7:0] R,
@@ -85,6 +88,15 @@ module openFPGA_Pocket_Analogizer #(parameter MASTER_CLK_FREQ=50_000_000, parame
 	input  wire Vblank,
 	input  wire Hsync,
 	input  wire Vsync,
+
+	//OSD out
+	output  wire [7:0] OSD_out_R,
+	output  wire [7:0] OSD_out_G,
+	output  wire [7:0] OSD_out_B,
+	output  wire OSD_out_Hblank,
+	output  wire OSD_out_Vblank,
+	output  wire OSD_out_Hsync,
+	output  wire OSD_out_Vsync,
 
 	//openFPGA Bridge interface
 	input wire bridge_endian_little,
@@ -249,6 +261,11 @@ assign analogizer_osd_out        = analogizer_osd_out2;
     wire CART_PIN31_IN ;
     wire CART_PIN31_DIR ;
 
+    logic jvs_data_ready;
+	jvs_node_info_t jvs_nodes;
+    logic [7:0] node_name_rd_data;
+    logic [6:0] node_name_rd_addr;
+
 	openFPGA_Pocket_Analogizer_SNAC #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) snac
 	(
 		.i_clk(i_clk),
@@ -277,19 +294,343 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		.CART_PIN31_DIR(CART_PIN31_DIR),
 		//debug
 		.DBG_TX(DBG_TX),
-    	.o_stb(o_stb)
+    	.o_stb(o_stb),
+		//JVS node info
+		.jvs_data_ready(jvs_data_ready),
+        .jvs_nodes(jvs_nodes),
+        .node_name_rd_data(node_name_rd_data),
+        .node_name_rd_addr(node_name_rd_addr)
 	); 
+
+	// Assign string for snac_game_cont_type
+	parameter int MAX_DEV     = 21; 
+parameter int MAX_STR_LEN = 30; //stringz
+
+// typedef para una cadena fija
+typedef logic [8 * MAX_STR_LEN-1:0] ascii_str_t ;
+
+// Tabla de cadenas (índice = número de dispositivo)
+localparam ascii_str_t SNACSelectionOptions [0:MAX_DEV-1] = '{
+    //  0
+    "None\0",
+    //  1
+    "DB15 Normal Neogeo/Arcade\0",
+    //  2
+    "NES\0",
+    //  3
+    "SNESd\0",
+    //  4
+    "PCE 2btn\0",
+    //  5
+    "PCE 6btn\0",
+    //  6
+    "PCE Multitap\0",
+    //  7
+    "\0", // void
+    //  8
+    "\0", // void
+    //  9 (0x9)
+    "DB15 Fast Neogeo/Arcade DB15\0",
+    // 10
+    "\0", // void
+    // 11 (0xb)
+    "SNES A,B<->X,Y\0",
+    // 12–16
+    "\0", // void
+	"\0", // void
+	"\0", // void
+	"\0", // void
+	"\0", // void
+    // 17 (0x11)
+    "PSX (Digital PAD)\0",
+    // 18
+    "\0", // void
+    // 19 (0x13)
+    "PSX (Analog PAD)\0",
+    // 20 (0x14)
+    "JVS RS485/RS232 (JVS IO)\0"
+};
+
+function automatic logic [7:0] get_char(
+  input ascii_str_t s, input int j);
+  return s[$bits(s)-1 - 8*j -: 8];    // slice de 8 bits, also works: return s[8*(MAX_STR_LEN-1-j) +: 8];
+endfunction
+
+	//------- Process JVS node name to OSD memory -----------
+	logic jvs_data_ready_prev;
+	logic do_proc = 1'b0;
+	logic [5:0] btn_cnt = 6'd0;
+	logic [3:0] hex_nibble;
+
+	localparam SNAC_DEVICE_STR_POS = 488;
+	localparam JVS_NODE_NUMBER_POS = 528;
+	localparam JVS_NODE_NAME_POS = 642;
+	localparam JVS_NODE_NAME_LAST1_POS = JVS_NODE_NAME_POS + 36 - 1;
+	localparam JVS_NODE_NAME_LAST2_POS = JVS_NODE_NAME_LAST1_POS + 40;
+	localparam JVS_NODE_CMD_POS = 770;
+	localparam JVS_NODE_JVS_POS = 810;
+	localparam JVS_NODE_COM_POS = 850;
+	localparam JVS_P1_BTN_POS = 890;
+	localparam JVS_P1_JOY_POS = 930;
+	localparam JVS_P2_BTN_POS = 970;
+	localparam JVS_P2_JOY_POS = 1010;
+
+
+	enum int unsigned {
+		START = 0, 
+		PROCESSING = 1, 
+		SNAC_DEVICE_STR = 2,
+		COPY_CMD_VER1 = 3, 
+		COPY_CMD_VER2 = 4, 
+		COPY_JVS_VER1 = 5, 
+		COPY_JVS_VER2 = 6, 
+		COPY_COM_VER1 = 7, 
+		COPY_COM_VER2 = 8,
+		P1_BTN = 9,
+		P1_JOY = 10,
+		P2_BTN = 11,
+		P2_JOY = 12,
+		EOS = 14
+	} jvs_name_copy_state;
+
+	always @(posedge i_clk) begin
+		jvs_data_ready_prev <= jvs_data_ready; //OSD_VS
+		//jvs_data_ready_prev <= OSD_VS;
+;
+
+		if (!jvs_data_ready_prev && jvs_data_ready) begin
+		//if (!jvs_data_ready_prev && OSD_VS) begin
+			jvs_name_copy_state <= START;
+			node_name_rd_addr <= 7'h0; //set initial read address
+			OSD_wr_en <= 1'b0;
+			OSD_wr_addr <= JVS_NODE_NAME_POS; //set start of destination address;		
+			OSD_wr_data <= 8'd0;
+			do_proc <= 1'b1;
+		end else if (do_proc) begin
+			case (jvs_name_copy_state)
+				START: begin
+					jvs_name_copy_state <= PROCESSING;
+
+					//update next byte address
+					OSD_wr_data <= node_name_rd_data;
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_NAME_POS;
+					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+				end
+				PROCESSING: begin
+					if (node_name_rd_data  != 8'h00 && (OSD_wr_addr  < JVS_NODE_NAME_POS + jvs_node_info_pkg::NODE_NAME_SIZE)) begin
+						//write byte to OSD memory
+						//OSD_wr_en <= 1'b1;
+						OSD_wr_data <= node_name_rd_data;
+						
+						//prepare next byte
+						OSD_wr_addr <= (OSD_wr_addr == JVS_NODE_NAME_LAST1_POS || OSD_wr_addr == JVS_NODE_NAME_LAST2_POS) ? OSD_wr_addr + 11'd5 : OSD_wr_addr + 11'd1;	
+						node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+					end else begin
+						OSD_wr_en <= 1'b1;
+						jvs_name_copy_state <= SNAC_DEVICE_STR;
+						OSD_wr_addr <= SNAC_DEVICE_STR_POS;
+						OSD_wr_data <= get_char(SNACSelectionOptions[snac_game_cont_type], btn_cnt);
+						btn_cnt <= 6'd0;
+					end
+				end
+				SNAC_DEVICE_STR: begin
+					if (get_char(SNACSelectionOptions[snac_game_cont_type], btn_cnt)  != 8'h00 && (OSD_wr_addr  < SNAC_DEVICE_STR_POS + MAX_STR_LEN)) begin
+						//write byte to OSD memory
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= SNAC_DEVICE_STR_POS + btn_cnt;
+						OSD_wr_data <= get_char(SNACSelectionOptions[snac_game_cont_type], btn_cnt);
+						btn_cnt <= btn_cnt + 6'd1;
+					end else begin
+						OSD_wr_en <= 1'b0;
+						jvs_name_copy_state <= COPY_CMD_VER1;
+						btn_cnt <= 6'd0;
+					end					
+				end
+				COPY_CMD_VER1: begin
+					jvs_name_copy_state <= COPY_CMD_VER2;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_CMD_POS;
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_cmd_ver[0][7:4]; //LS nibble
+				end
+				COPY_CMD_VER2: begin
+					jvs_name_copy_state <= COPY_JVS_VER1;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_CMD_POS + 11'd1;
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_cmd_ver[0][3:0]; //MS nibble
+				end
+				COPY_JVS_VER1: begin
+					jvs_name_copy_state <= COPY_JVS_VER2;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_JVS_POS;
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_jvs_ver[0][7:4]; //LS nibble
+				end
+				COPY_JVS_VER2: begin
+					jvs_name_copy_state <= COPY_COM_VER1;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_JVS_POS + 11'd1;
+					OSD_wr_data <= 8'h30 +jvs_nodes.node_jvs_ver[0][3:0]; //MS nibble
+				end
+				COPY_COM_VER1: begin
+					jvs_name_copy_state <= COPY_COM_VER2;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_COM_POS;
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_com_ver[0][7:4]; //LS nibble
+				end
+				COPY_COM_VER2: begin
+					jvs_name_copy_state <= P1_BTN;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_COM_POS + 11'd1;
+					OSD_wr_data <= 8'h30 +jvs_nodes.node_com_ver[0][3:0]; //MS nibble
+				end				
+				P1_BTN: begin
+					if (btn_cnt < 6'd15) begin
+						btn_cnt <= btn_cnt + 6'd1;
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= JVS_P1_BTN_POS + btn_cnt; //set start of destination address;		
+						OSD_wr_data <= (p1_btn_state[15-btn_cnt]) ? "1" : "0";
+					end else begin
+						btn_cnt <= 6'd0;
+						jvs_name_copy_state <= P2_BTN;
+					end
+				end
+				P2_BTN: begin
+					if (btn_cnt < 6'd15) begin
+						btn_cnt <= btn_cnt + 6'd1;
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= JVS_P2_BTN_POS + btn_cnt; //set start of destination address;		
+						OSD_wr_data <= (p2_btn_state[15-btn_cnt]) ? "1" : "0";
+					end else begin
+						btn_cnt <= 6'd0;
+						jvs_name_copy_state <= P1_JOY;
+					end
+				end
+				P1_JOY: begin
+					if (btn_cnt < 6'd8) begin
+						btn_cnt <= btn_cnt + 6'd1;
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= JVS_P1_JOY_POS + btn_cnt; //set start of destination address;
+						case(btn_cnt[2:0])
+							3'd0: OSD_wr_data <= hex2ascii(p1_joy_state[31:28], 1'b1);
+							3'd1: OSD_wr_data <= hex2ascii(p1_joy_state[27:24], 1'b1);
+							3'd2: OSD_wr_data <= hex2ascii(p1_joy_state[23:20], 1'b1);
+							3'd3: OSD_wr_data <= hex2ascii(p1_joy_state[19:16], 1'b1);
+							3'd4: OSD_wr_data <= hex2ascii(p1_joy_state[15:12], 1'b1);
+							3'd5: OSD_wr_data <= hex2ascii(p1_joy_state[11:8], 1'b1);
+							3'd6: OSD_wr_data <= hex2ascii(p1_joy_state[7:4], 1'b1);
+							3'd7: OSD_wr_data <= hex2ascii(p1_joy_state[3:0], 1'b1);
+						endcase
+						
+					end else begin
+						btn_cnt <= 6'd0;
+						jvs_name_copy_state <= P2_JOY;
+					end
+				end
+				P2_JOY: begin
+					if (btn_cnt < 6'd8) begin
+						btn_cnt <= btn_cnt + 6'd1;
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= JVS_P2_JOY_POS + btn_cnt; //set start of destination address;
+						case(btn_cnt[2:0])
+							3'd0: OSD_wr_data <= hex2ascii(p2_joy_state[31:28], 1'b1);
+							3'd1: OSD_wr_data <= hex2ascii(p2_joy_state[27:24], 1'b1);
+							3'd2: OSD_wr_data <= hex2ascii(p2_joy_state[23:20], 1'b1);
+							3'd3: OSD_wr_data <= hex2ascii(p2_joy_state[19:16], 1'b1);
+							3'd4: OSD_wr_data <= hex2ascii(p2_joy_state[15:12], 1'b1);
+							3'd5: OSD_wr_data <= hex2ascii(p2_joy_state[11:8], 1'b1);
+							3'd6: OSD_wr_data <= hex2ascii(p2_joy_state[7:4], 1'b1);
+							3'd7: OSD_wr_data <= hex2ascii(p2_joy_state[3:0], 1'b1);
+						endcase
+					end else begin
+						btn_cnt <= 6'd0;
+						OSD_wr_en <= 1'b0;
+						jvs_name_copy_state <= EOS;
+					end
+				end
+				EOS: begin
+						OSD_wr_addr <= 11'd0;		
+						OSD_wr_data <= 8'd0;
+						node_name_rd_addr <= 7'h0;
+						do_proc <= 1'b0;
+				end
+			endcase
+		end	
+	end
+	//--------------------------------------------------------
+
+//---------------------------------------------------------------------
+// Debug OSD
+//---------------------------------------------------------------------
+    logic [7:0] OSD_R, OSD_G, OSD_B;
+    logic OSD_HS, OSD_VS, OSD_HB, OSD_VB;
+
+	logic [10:0] OSD_wr_addr;
+    logic [7:0]  OSD_wr_data;
+    logic        OSD_wr_en=1'b0;
+
+   osd_top #(
+   		.CLK_HZ(MASTER_CLK_FREQ),
+   		.COLS(40),
+		.ROWS(30)
+   ) osd_debug_inst (
+       .clk(i_clk),
+       .reset(i_rst_core),
+       .pixel_ce(ce_pix),
+       .R_in(R),
+       .G_in(G),
+       .B_in(B),
+       .hsync_in(Hsync),
+       .vsync_in(Vsync),
+       .hblank(Hblank),
+       .vblank(Vblank),
+       .R_out(OSD_R),
+       .G_out(OSD_G),
+       .B_out(OSD_B),
+       .hsync_out(OSD_HS),
+       .vsync_out(OSD_VS),
+       .hblank_out(OSD_HB),
+       .vblank_out(OSD_VB),
+		//memory write interface
+		.wr_en(OSD_wr_en),
+		.wr_addr(OSD_wr_addr),
+		.wr_data(OSD_wr_data)
+   );
+
+	reg vsync_r;
+	reg init_r;
+	always @(posedge i_clk) begin
+		vsync_r <= Vsync;
+		init_r <= 1'b0;
+
+		if(vsync_r & ~Vsync) begin
+			init_r <= 1'b1;
+		end
+	end
+
+   assign OSD_out_R =OSD_R;
+   assign OSD_out_G =OSD_G;
+   assign OSD_out_B =OSD_B;
+   assign OSD_out_Hsync =OSD_HS;
+   assign OSD_out_Vsync =OSD_VS;
+   assign OSD_out_Hblank=OSD_HB;
+   assign OSD_out_Vblank=OSD_VB;
 
 
 //---------------------------------------------------------------------
 // Fix video
 //---------------------------------------------------------------------
-wire  ANALOGIZER_DE = ~(HBL || VBL);
-wire ANALOGIZER_CSYNC = ~^{HS, VS};
+wire  ANALOGIZER_DE = ~(OSD_HB || OSD_VB);
+wire ANALOGIZER_CSYNC = ~^{OSD_HS, OSD_VS};
 
 wire hs_fix,vs_fix;
-sync_fix sync_h(i_clk, Hsync, hs_fix);
-sync_fix sync_v(i_clk, Vsync, vs_fix);
+sync_fix sync_h(i_clk, OSD_HS, hs_fix);
+sync_fix sync_v(i_clk, OSD_VS, vs_fix);
 
 reg [7:0] R_fix,G_fix,B_fix;
 
@@ -305,11 +646,11 @@ always @(posedge i_clk) begin
 		//FIX ONLY FOR XAIN'D SLEENA
 		VS <= vs_fix;
 
-		{R_fix,G_fix,B_fix} <= {R,G,B};
-		HBL <= Hblank;
+		{R_fix,G_fix,B_fix} <= {OSD_R,OSD_G,OSD_B};
+		HBL <= OSD_HB;
 		// if(HBL & ~Hblank) VBL <= Vblank;
 		//FIX ONLY FOR XAIN'D SLEENA
-		VBL <= Vblank;
+		VBL <= OSD_VB;
 	end
 end
 //---------------------------------------------------------------------------

@@ -68,6 +68,8 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
+import jvs_node_info_pkg::*;
+
 module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
 (
     input wire i_clk, //Core Master Freq.
@@ -101,7 +103,13 @@ module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
     output reg CART_PIN31_DIR,
     //debug
     output wire [3:0] DBG_TX,
-    output wire o_stb
+    output wire o_stb,
+    //JVS node information structure
+    output logic jvs_data_ready,
+    output jvs_node_info_t jvs_nodes,
+    //RAM interface for node names (for debug/display purposes)
+    output logic [7:0] node_name_rd_data,
+    input logic [6:0] node_name_rd_addr
 ); 
     //
     logic SNAC_OUT1 ; //cart_tran_bank1[6]                                           D-
@@ -466,6 +474,11 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
         //.p3_joy_state(jvs_joy3),
         .p4_btn_state(jvs_p4),
         //.p4_joy_state(jvs_joy4),
+        //JVS node info
+        .jvs_data_ready(jvs_data_ready),
+        .jvs_nodes(jvs_nodes),
+        .node_name_rd_data(node_name_rd_data),
+        .node_name_rd_addr(node_name_rd_addr)
     );
 
     always @(*) begin

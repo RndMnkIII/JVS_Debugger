@@ -1,0 +1,405 @@
+m255
+K4
+z2
+13
+!s112 1.1
+!i10d 8192
+!i10e 25
+!i10f 100
+cModel Technology
+dF:/questasim64_10.7c/examples
+vosd_bin_writer
+Z0 DXx6 sv_std 3 std 0 22 d=_JfHTnXCN[H5FjiaJJc0
+Z1 DXx4 work 14 osd_format_pkg 0 22 >b7M88CWaP=WgXH]i]mcd1
+Z2 !s110 1757055749
+!i10b 1
+!s100 3YB`@TW?:S05Rc;9BY7CM1
+I>29[Rcmf>ole1S>fndWKb0
+Z3 VDg1SIo80bB@j0V0VzS_@n1
+!s105 osd_bin_writer_sv_unit
+S1
+Z4 dF:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer
+w1757055587
+8F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_bin_writer.sv
+FF:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_bin_writer.sv
+L0 5
+Z5 OL;L;10.7c;67
+r1
+!s85 0
+31
+Z6 !s108 1757055749.000000
+!s107 F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_bin_writer.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_bin_writer.sv|
+!i113 0
+Z7 o-work work -sv -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+Z8 tCvgOpt 0
+vosd_cmd_batch_enqueuer
+R0
+Z9 DXx4 work 11 osd_cmd_pkg 0 22 ]l2Zffk8c63n_jfHUdhQ52
+R2
+!i10b 1
+!s100 <GnkAKSFhFalK6cK[mWUS0
+IXEHl:ekOHezg]^<I7d:Io2
+R3
+!s105 osd_cmd_batch_enqueuer_sv_unit
+S1
+R4
+w1757055684
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_cmd_batch_enqueuer.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_cmd_batch_enqueuer.sv
+L0 4
+R5
+r1
+!s85 0
+31
+R6
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_cmd_batch_enqueuer.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_cmd_batch_enqueuer.sv|
+!i113 0
+R7
+R8
+Xosd_cmd_pkg
+R0
+R2
+!i10b 1
+!s100 1`2oIi5LG90jnijE=7DfD1
+I]l2Zffk8c63n_jfHUdhQ52
+V]l2Zffk8c63n_jfHUdhQ52
+S1
+R4
+w1757022079
+8F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_pkg.sv
+FF:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_pkg.sv
+L0 4
+R5
+r1
+!s85 0
+31
+R6
+!s107 F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_pkg.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_cmd_pkg.sv|
+!i113 0
+R7
+R8
+vosd_demo_str_rom
+R0
+Z10 !s110 1757055751
+!i10b 1
+!s100 :cB]5IR3PG?CRCBI]B]__3
+IXdWcJ<;mz;NLd0_P2?3WW3
+R3
+Z11 !s105 osd_writer_sv_unit
+S1
+R4
+Z12 w1757055740
+Z13 8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_writer.sv
+Z14 FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_writer.sv
+L0 172
+R5
+r1
+!s85 0
+31
+Z15 !s108 1757055750.000000
+Z16 !s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_writer.sv|
+Z17 !s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_writer.sv|
+!i113 0
+R7
+R8
+Xosd_format_pkg
+R0
+Z18 !s110 1757055750
+!i10b 1
+!s100 zC<bdh>5OiI9LPZ1ic=MP0
+I>b7M88CWaP=WgXH]i]mcd1
+V>b7M88CWaP=WgXH]i]mcd1
+S1
+R4
+w1756879132
+8F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_format_pkg.sv
+FF:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_format_pkg.sv
+L0 5
+R5
+r1
+!s85 0
+31
+R6
+!s107 F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_format_pkg.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/osd_format_pkg.sv|
+!i113 0
+R7
+R8
+vosd_hex_writer
+R0
+R1
+R18
+!i10b 1
+!s100 C`ddhMOk=[cGgalV^bU`K2
+I6ICz4IZNnmDRNUWlEILXT3
+R3
+!s105 osd_hex_writer_sv_unit
+S1
+R4
+w1757055691
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_hex_writer.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_hex_writer.sv
+L0 5
+R5
+r1
+!s85 0
+31
+R15
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_hex_writer.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_hex_writer.sv|
+!i113 0
+R7
+R8
+vosd_init_fsm_dyn
+R0
+R9
+R18
+!i10b 1
+!s100 `W=MGHCd4eSXdEjooemC51
+IHdBa`TEm^FPhaLnjZ@K9b1
+R3
+!s105 osd_init_fsm_dyn_sv_unit
+S1
+R4
+w1757055699
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_init_fsm_dyn.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_init_fsm_dyn.sv
+L0 5
+R5
+r1
+!s85 0
+31
+R15
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_init_fsm_dyn.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_init_fsm_dyn.sv|
+!i113 0
+R7
+R8
+vosd_print_dispatcher
+R0
+!s110 1757055860
+!i10b 1
+!s100 N?iE>:<?_1MRb9eR6=gi:0
+I0J2go7S9[FP_:Vj0ie^G03
+R3
+!s105 osd_print_dispatcher_sv_unit
+S1
+R4
+w1757055851
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_print_dispatcher.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_print_dispatcher.sv
+L0 5
+R5
+r1
+!s85 0
+31
+!s108 1757055860.000000
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_print_dispatcher.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_print_dispatcher.sv|
+!i113 0
+R7
+R8
+vosd_sdec_writer
+R0
+R18
+!i10b 1
+!s100 @Xg^VP:Aaa=5iz^ZXEZ=J2
+IIYUUHY?cKjFRAdWV3DTd71
+R3
+!s105 osd_sdec_writer_sv_unit
+S1
+R4
+w1757055712
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_sdec_writer.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_sdec_writer.sv
+L0 5
+R5
+r1
+!s85 0
+31
+R15
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_sdec_writer.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_sdec_writer.sv|
+!i113 0
+R7
+R8
+vosd_str_writer
+R0
+R18
+!i10b 1
+!s100 ?<fF2kBjiE^U3YhzIYRW^0
+IB_oVBF0ead3UR@PR>f0B@3
+R3
+!s105 osd_str_writer_sv_unit
+S1
+R4
+w1757055719
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_str_writer.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_str_writer.sv
+L0 6
+R5
+r1
+!s85 0
+31
+R15
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_str_writer.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_str_writer.sv|
+!i113 0
+R7
+R8
+vosd_textbuf
+R0
+R18
+!i10b 1
+!s100 6FbU90S0@PBj2bCADRnae1
+ITPAjZizHmF:icm?YX=9o10
+R3
+!s105 osd_textbuf_sv_unit
+S1
+R4
+w1757055725
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_textbuf.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_textbuf.sv
+L0 6
+R5
+r1
+!s85 0
+31
+R15
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_textbuf.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_textbuf.sv|
+!i113 0
+R7
+R8
+vosd_udec_writer_seq
+R0
+R18
+!i10b 1
+!s100 ?CIW@flSXZzP^n4TL:Xd[3
+IMGGOCVn2mRM8aK47Ul6`f2
+R3
+!s105 osd_udec_writer_seq_sv_unit
+S1
+R4
+w1757055733
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_udec_writer_seq.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_udec_writer_seq.sv
+L0 4
+R5
+r1
+!s85 0
+31
+R15
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_udec_writer_seq.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\osd_udec_writer_seq.sv|
+!i113 0
+R7
+R8
+vosd_writer
+R0
+R9
+R10
+!i10b 1
+!s100 H=i_i]bao_K2mMCbRXJ@92
+IbD?HEg]FefiPlPNH7jm601
+R3
+R11
+S1
+R4
+R12
+R13
+R14
+L0 6
+R5
+r1
+!s85 0
+31
+R15
+R16
+R17
+!i113 0
+R7
+R8
+vrowcol_to_addr_1c
+R0
+R10
+!i10b 1
+!s100 kDXRAJgXVGf7Y?7NM<c:A2
+Io>aPXg3PWa0c:@Fk0@R7l3
+R3
+!s105 rowcol_to_addr_1c_sv_unit
+S1
+R4
+w1756879336
+8F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_1c.sv
+FF:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_1c.sv
+L0 3
+R5
+r1
+!s85 0
+31
+Z19 !s108 1757055751.000000
+!s107 F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_1c.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_1c.sv|
+!i113 0
+R7
+R8
+vrowcol_to_addr_pipe
+R0
+R10
+!i10b 1
+!s100 8?D3ZBJO2?_EU:noA0L2G3
+I0JPdEdzQM[z`Iz5__fcWT0
+R3
+!s105 rowcol_to_addr_pipe_sv_unit
+S1
+R4
+w1757022391
+8F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_pipe.sv
+FF:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_pipe.sv
+L0 3
+R5
+r1
+!s85 0
+31
+R19
+!s107 F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_pipe.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:/Espacio_Trabajo/repos/Pocket/JVS_Debugger/simu/osd_writer/rowcol_to_addr_pipe.sv|
+!i113 0
+R7
+R8
+vtb_osd_writer
+R0
+!s110 1757058170
+!i10b 1
+!s100 a4U[zO7dQ?l?1z:=V^>h]3
+If:?iL2T6Xm7ObV:9^Jbd73
+R3
+!s105 tb_osd_writer_sv_unit
+S1
+R4
+w1757058127
+8F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\tb_osd_writer.sv
+FF:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\tb_osd_writer.sv
+L0 11
+R5
+r1
+!s85 0
+31
+!s108 1757058170.000000
+!s107 F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\tb_osd_writer.sv|
+!s90 -reportprogress|300|-work|work|-vopt|-sv|-stats=none|F:\Espacio_Trabajo\repos\Pocket\JVS_Debugger\simu\osd_writer\tb_osd_writer.sv|
+!i113 0
+R7
+R8
+Ttb_osd_writer_opt
+!s110 1757058185
+V2R1GD`hglcVnF`ZdJ?U[L3
+04 13 4 work tb_osd_writer fast 0
+o+acc
+R8
+ntb_osd_writer_opt
+OL;O;10.7c;67

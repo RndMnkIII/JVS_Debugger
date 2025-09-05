@@ -63,8 +63,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     output logic [15:0] p4_btn_state,    // Player 4 button states (reserved)
 
     //JVS node information structure
+    output logic jvs_data_ready,
     output jvs_node_info_t jvs_nodes,
-    //RAM interface for node names (for debug/display purposes
+    //RAM interface for node names (for debug/display purposes)
     output logic [7:0] node_name_rd_data,
     input logic [6:0] node_name_rd_addr
 );
@@ -244,9 +245,32 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // logic [7:0] node_jvs_ver [0:MAX_JVS_NODES-1];    // JVS version for each node  
     // logic [7:0] node_com_ver [0:MAX_JVS_NODES-1];    // Communication version for each node
 
+    //initialze jvs_nodes
+    jvs_node_info_t jvs_nodes_r, jvs_nodes_r2;
+    
+    localparam jvs_node_info_t JVS_INFO_INIT = '{
+        node_cmd_ver: '{8'h13, 8'h11}, 
+        node_jvs_ver: '{8'h30, 8'h30},  
+        node_com_ver: '{8'h10, 8'h10}   
+    };
+
+    logic jvs_data_ready_init, jvs_data_ready_joy;
+
+    // Combined data ready signal indicating new data available from either initialization or input polling
+    assign jvs_data_ready = jvs_data_ready_init | jvs_data_ready_joy;
+    
+    //assign jvs_nodes = jvs_nodes_r2;
+    assign jvs_nodes = jvs_nodes_r;
+
     // RAM for current node name during reception
     (* ramstyle = "M10K" *) logic [7:0] node_name_ram [0:jvs_node_info_pkg::NODE_NAME_SIZE -1];
 
+    //initial content for debug purposes
+    initial begin
+        $readmemh("jvs_device_name.mem", node_name_ram); //null terminated string "namco ltd.;NAJV2;Ver1.00;JPN,Multipurpose."
+    end
+
+    //infer simple dual-port RAM for node name reading
     always_ff @(posedge i_clk) begin
         node_name_rd_data <= node_name_ram[node_name_rd_addr];
     end
@@ -322,6 +346,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Implements the complete JVS initialization sequence and input polling
     
     always @(posedge i_clk) begin
+
+        jvs_data_ready_init <= 1'b0;
+
         if (i_rst || !i_ena) begin
             // Initialize all state variables on reset
             main_state <= STATE_INIT_DELAY;
@@ -640,7 +667,10 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             CMD_CMDREV: main_state <= STATE_SEND_JVSREV;     // Command revision read, get JVS revision
                             CMD_JVSREV: main_state <= STATE_SEND_COMMVER;    // JVS revision read, get comm version
                             CMD_COMMVER: main_state <= STATE_SEND_FEATCHK;   // Comm version read, check features
-                            CMD_FEATCHK: main_state <= STATE_IDLE;           // Features checked, start polling
+                            CMD_FEATCHK: begin
+                                jvs_data_ready_init <= 1'b1;               // Indicate initialization complete
+                                main_state <= STATE_IDLE;           // Features checked, start polling
+                            end
                             CMD_READ_INPUTS: main_state <= STATE_IDLE;       // Inputs read, continue polling
                             default: main_state <= STATE_IDLE;
                         endcase
@@ -672,6 +702,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Handles byte-by-byte reception of JVS frames with checksum validation
     
     always @(posedge i_clk) begin
+        jvs_nodes_r2 <= JVS_INFO_INIT; //initialize jvs_nodes
+        jvs_data_ready_joy <= 1'b0;
+
         if (i_rst || !i_ena) begin
             // Initialize RX state machine and output registers
             rx_state <= RX_IDLE;
@@ -687,6 +720,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             p2_joy_state <= 32'h80808080;
             p3_btn_state <= 16'h0000;
             p4_btn_state <= 16'h0000;
+
+            
         end else begin
             // Clear frame complete flag when main state machine processes it
             if (main_state != STATE_WAIT_RX) begin
@@ -870,7 +905,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
                             // Store command revision for current node (current_device_addr - 1 as array index)
                             if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
-                                jvs_nodes.node_cmd_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
+                                jvs_nodes_r.node_cmd_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
                             end
                         end
                         // Command processed, signal completion
@@ -885,7 +920,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
                             // Store JVS revision for current node (current_device_addr - 1 as array index)
                             if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
-                                jvs_nodes.node_jvs_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
+                                jvs_nodes_r.node_jvs_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
                             end
                         end
                         // Command processed, signal completion
@@ -900,7 +935,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
                             // Store communication version for current node (current_device_addr - 1 as array index)
                             if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
-                                jvs_nodes.node_com_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains version
+                                jvs_nodes_r.node_com_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains version
                             end
                         end
                         // Command processed, signal completion
@@ -1034,6 +1069,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             end
                         end
                         // Input processing complete, signal completion
+                        jvs_data_ready_joy <= 1'b1; // Indicate new input data available
                         rx_frame_complete <= 1'b1;
                         rx_counter <= 8'h00;
                         rx_state <= RX_IDLE;

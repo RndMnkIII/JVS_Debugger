@@ -508,7 +508,7 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 				end
 
 				P1_BTN: begin
-					if (btn_cnt < 6'd15) begin
+					if (btn_cnt < 6'd16) begin
 						btn_cnt <= btn_cnt + 6'd1;
 						OSD_wr_en <= 1'b1;
 						OSD_wr_addr <= JVS_P1_BTN_POS + btn_cnt; //set start of destination address;		
@@ -520,7 +520,7 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 				end
 
 				P2_BTN: begin
-					if (btn_cnt < 6'd15) begin
+					if (btn_cnt < 6'd16) begin
 						btn_cnt <= btn_cnt + 6'd1;
 						OSD_wr_en <= 1'b1;
 						OSD_wr_addr <= JVS_P2_BTN_POS + btn_cnt; //set start of destination address;		

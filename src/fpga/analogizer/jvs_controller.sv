@@ -34,6 +34,8 @@
 // Status: Alpha - Work in Progress
 // Date: 2025
 //////////////////////////////////////////////////////////////////////
+//Use: set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1" 
+//in project .qsf to use dummy data for simulation without JVS device
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -68,7 +70,17 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     //RAM interface for node names (for debug/display purposes)
     output logic [7:0] node_name_rd_data,
     input logic [6:0] node_name_rd_addr
-);
+); 
+
+//==================================================================================
+// Show in Quartus Synthesis if dummy data is used for simulation without JVS device
+//==================================================================================
+`ifdef USE_DUMMY_JVS_DATA
+  initial $warning("=== USE_DUMMY_JVS_DATA is defined (=%0d). Using DUMMY data for JVS IO device ===", `USE_DUMMY_JVS_DATA);
+`else
+  initial $warning("=== USE_DUMMY_JVS_DATA is NOT defined.  Using REAL data for JVS IO device ===");
+`endif
+
 
     //=========================================================================
     // UART TIMING CONFIGURATION
@@ -238,42 +250,44 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // JVS NODE INFORMATION STRUCTURES
     //=========================================================================
     // Structure to store information about each JVS node
-    //jvs_node_info_t jvs_nodes;
+    jvs_node_info_t jvs_nodes_r;
 
-    // logic [7:0] node_name [0:MAX_JVS_NODES-1][0:NODE_NAME_SIZE-1]; // Node identification strings
-    // logic [7:0] node_cmd_ver [0:MAX_JVS_NODES-1];    // Command version for each node
-    // logic [7:0] node_jvs_ver [0:MAX_JVS_NODES-1];    // JVS version for each node  
-    // logic [7:0] node_com_ver [0:MAX_JVS_NODES-1];    // Communication version for each node
-
-    //initialze jvs_nodes
-    jvs_node_info_t jvs_nodes_r, jvs_nodes_r2;
-    
+//see comments in JVS_Debugger.qsf under [JVS project settings] 
+`ifdef USE_DUMMY_JVS_DATA
+	jvs_node_info_t jvs_nodes_r2;
+	 
     localparam jvs_node_info_t JVS_INFO_INIT = '{
+        node_id: '{8'h01, 8'h02},
         node_cmd_ver: '{8'h13, 8'h11}, 
         node_jvs_ver: '{8'h30, 8'h30},  
         node_com_ver: '{8'h10, 8'h10}   
     };
-
-    logic jvs_data_ready_init, jvs_data_ready_joy;
-
-    // Combined data ready signal indicating new data available from either initialization or input polling
-    assign jvs_data_ready = jvs_data_ready_init | jvs_data_ready_joy;
-    
-    //assign jvs_nodes = jvs_nodes_r2;
+    assign jvs_nodes = jvs_nodes_r2;
+`else 
     assign jvs_nodes = jvs_nodes_r;
+`endif
 
+    //=========================================================================
     // RAM for current node name during reception
     (* ramstyle = "M10K" *) logic [7:0] node_name_ram [0:jvs_node_info_pkg::NODE_NAME_SIZE -1];
 
-    //initial content for debug purposes
+////initial content for simulation without JVS device
+`ifdef USE_DUMMY_JVS_DATA
     initial begin
         $readmemh("jvs_device_name.mem", node_name_ram); //null terminated string "namco ltd.;NAJV2;Ver1.00;JPN,Multipurpose."
     end
+`endif
 
     //infer simple dual-port RAM for node name reading
     always_ff @(posedge i_clk) begin
         node_name_rd_data <= node_name_ram[node_name_rd_addr];
     end
+
+    //=========================================================================
+    // JVS DATA READY SIGNAL
+    //=========================================================================
+    logic jvs_data_ready_init, jvs_data_ready_joy;
+    assign jvs_data_ready = jvs_data_ready_init | jvs_data_ready_joy;
     
     //=========================================================================
     // RS485 DIRECTION CONTROL
@@ -356,6 +370,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             timeout_counter <= 32'h0;
             poll_timer <= 32'h0;
             current_device_addr <= 8'h01;    // Standard JVS device address
+            jvs_nodes_r.node_id[0] <= 8'h01;
             rs485_tx_request <= 1'b0;
             uart_tx_dv <= 1'b0;
             last_tx_state <= 5'h0;
@@ -702,7 +717,12 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Handles byte-by-byte reception of JVS frames with checksum validation
     
     always @(posedge i_clk) begin
-        jvs_nodes_r2 <= JVS_INFO_INIT; //initialize jvs_nodes
+
+    //initial content for simulation without JVS device
+    `ifdef USE_DUMMY_JVS_DATA
+        jvs_nodes_r2 <= JVS_INFO_INIT;
+    `endif
+    
         jvs_data_ready_joy <= 1'b0;
 
         if (i_rst || !i_ena) begin

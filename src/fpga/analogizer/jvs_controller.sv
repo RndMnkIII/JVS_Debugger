@@ -34,6 +34,8 @@
 // Status: Alpha - Work in Progress
 // Date: 2025
 //////////////////////////////////////////////////////////////////////
+//Use: set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1" 
+//in project .qsf to use dummy data for simulation without JVS device
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -68,7 +70,17 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     //RAM interface for node names (for debug/display purposes)
     output logic [7:0] node_name_rd_data,
     input logic [6:0] node_name_rd_addr
-);
+); 
+
+//==================================================================================
+// Show in Quartus Synthesis if dummy data is used for simulation without JVS device
+//==================================================================================
+`ifdef USE_DUMMY_JVS_DATA
+  initial $warning("=== USE_DUMMY_JVS_DATA is defined (=%0d). Using DUMMY data for JVS IO device ===", `USE_DUMMY_JVS_DATA);
+`else
+  initial $warning("=== USE_DUMMY_JVS_DATA is NOT defined.  Using REAL data for JVS IO device ===");
+`endif
+
 
     //=========================================================================
     // UART TIMING CONFIGURATION
@@ -138,7 +150,18 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam CMD_COMMVER = 8'h13;          // Communications version command
     localparam CMD_FEATCHK = 8'h14;          // Feature check command
     localparam CMD_READ_INPUTS = 8'h20;      // Read input states command
-    localparam STATUS_NORMAL = 8'h01;        // Normal status response code
+    
+    // JVS Status codes (Table 6)
+    localparam STATUS_NORMAL = 8'h01;        // Normal
+    localparam STATUS_UNKNOWN_CMD = 8'h02;   // Unknown command (Unsupported command)
+    localparam STATUS_CHECKSUM_ERROR = 8'h03; // Checksum error
+    localparam STATUS_ACK_OVERFLOW = 8'h04;  // Acknowledge overflow (Acknowledge data is too large)
+    
+    // JVS Report codes (Table 7)
+    localparam REPORT_NORMAL = 8'h01;        // Normal
+    localparam REPORT_PARAM_ERROR_COUNT = 8'h02; // Parameter error (incorrect number of parameters)
+    localparam REPORT_PARAM_ERROR_DATA = 8'h03;  // Parameter error (invalid data)
+    localparam REPORT_BUSY = 8'h04;          // Busy (I/O board cannot receive more commands)
 
     // JVS Escape sequence constants for data byte escaping
     localparam JVS_ESCAPE_BYTE = 8'hD0;      // Escape marker byte
@@ -149,9 +172,11 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam JVS_SYNC_POS = 8'd0;          // Position of sync byte (E0)
     localparam JVS_ADDR_POS = 8'd1;          // Position of address byte
     localparam JVS_LENGTH_POS = 8'd2;        // Position of length byte
-    localparam JVS_DATA_START = 8'd3;        // Start position of data bytes (RX)
+    localparam JVS_DATA_START = 8'd4;        // Start position of data bytes (RX) - after status and include report bytes
+    localparam JVS_STATUS_POS = 8'd3;        // Position of status byte in response
+    localparam JVS_REPORT_POS = 8'd4;        // Position of report byte in response (should be processed)
     localparam JVS_CMD_START = 8'd3;         // Start position of command bytes (TX)
-    localparam JVS_OVERHEAD = 8'd2;          // Overhead for length calculation
+    localparam JVS_OVERHEAD = 8'd2;          // Overhead for length calculation (includes checksum + command byte)
 
     // Buffer size configuration for resource optimization
     localparam RX_BUFFER_SIZE = 128;         // Size of RX buffers (I/O Identify max 106 bytes)
@@ -238,42 +263,44 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // JVS NODE INFORMATION STRUCTURES
     //=========================================================================
     // Structure to store information about each JVS node
-    //jvs_node_info_t jvs_nodes;
+    jvs_node_info_t jvs_nodes_r;
 
-    // logic [7:0] node_name [0:MAX_JVS_NODES-1][0:NODE_NAME_SIZE-1]; // Node identification strings
-    // logic [7:0] node_cmd_ver [0:MAX_JVS_NODES-1];    // Command version for each node
-    // logic [7:0] node_jvs_ver [0:MAX_JVS_NODES-1];    // JVS version for each node  
-    // logic [7:0] node_com_ver [0:MAX_JVS_NODES-1];    // Communication version for each node
-
-    //initialze jvs_nodes
-    jvs_node_info_t jvs_nodes_r, jvs_nodes_r2;
-    
+//see comments in JVS_Debugger.qsf under [JVS project settings] 
+`ifdef USE_DUMMY_JVS_DATA
+	jvs_node_info_t jvs_nodes_r2;
+	 
     localparam jvs_node_info_t JVS_INFO_INIT = '{
+        node_id: '{8'h01, 8'h02},
         node_cmd_ver: '{8'h13, 8'h11}, 
         node_jvs_ver: '{8'h30, 8'h30},  
         node_com_ver: '{8'h10, 8'h10}   
     };
-
-    logic jvs_data_ready_init, jvs_data_ready_joy;
-
-    // Combined data ready signal indicating new data available from either initialization or input polling
-    assign jvs_data_ready = jvs_data_ready_init | jvs_data_ready_joy;
-    
-    //assign jvs_nodes = jvs_nodes_r2;
+    assign jvs_nodes = jvs_nodes_r2;
+`else 
     assign jvs_nodes = jvs_nodes_r;
+`endif
 
+    //=========================================================================
     // RAM for current node name during reception
     (* ramstyle = "M10K" *) logic [7:0] node_name_ram [0:jvs_node_info_pkg::NODE_NAME_SIZE -1];
 
-    //initial content for debug purposes
+////initial content for simulation without JVS device
+`ifdef USE_DUMMY_JVS_DATA
     initial begin
         $readmemh("jvs_device_name.mem", node_name_ram); //null terminated string "namco ltd.;NAJV2;Ver1.00;JPN,Multipurpose."
     end
+`endif
 
     //infer simple dual-port RAM for node name reading
     always_ff @(posedge i_clk) begin
         node_name_rd_data <= node_name_ram[node_name_rd_addr];
     end
+
+    //=========================================================================
+    // JVS DATA READY SIGNAL
+    //=========================================================================
+    logic jvs_data_ready_init, jvs_data_ready_joy;
+    assign jvs_data_ready = jvs_data_ready_init | jvs_data_ready_joy;
     
     //=========================================================================
     // RS485 DIRECTION CONTROL
@@ -356,6 +383,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             timeout_counter <= 32'h0;
             poll_timer <= 32'h0;
             current_device_addr <= 8'h01;    // Standard JVS device address
+            jvs_nodes_r.node_id[0] <= 8'h01;
             rs485_tx_request <= 1'b0;
             uart_tx_dv <= 1'b0;
             last_tx_state <= 5'h0;
@@ -588,7 +616,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (rs485_state == RS485_TRANSMIT) begin
                         tx_counter <= 8'h00;                    // Reset byte counter
                         tx_checksum <= 8'h00;                   // Reset checksum
-                        tx_length <= JVS_DATA_START + tx_buffer[JVS_LENGTH_POS];       // Calculate total frame length
+                        tx_length <= JVS_CMD_START + tx_buffer[JVS_LENGTH_POS];       // Calculate total frame length
                         main_state <= STATE_TRANSMIT_BYTE;
                     end
                 end
@@ -702,7 +730,12 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Handles byte-by-byte reception of JVS frames with checksum validation
     
     always @(posedge i_clk) begin
-        jvs_nodes_r2 <= JVS_INFO_INIT; //initialize jvs_nodes
+
+    //initial content for simulation without JVS device
+    `ifdef USE_DUMMY_JVS_DATA
+        jvs_nodes_r2 <= JVS_INFO_INIT;
+    `endif
+    
         jvs_data_ready_joy <= 1'b0;
 
         if (i_rst || !i_ena) begin
@@ -805,7 +838,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             //-------------------------------------------------------------
             if (rx_state == RX_UNESCAPE) begin
                 if (copy_read_idx <= (JVS_OVERHEAD + rx_length)) begin // Process header + data + checksum
-                    if (copy_read_idx < JVS_DATA_START) begin
+                    if (copy_read_idx < JVS_STATUS_POS) begin
                         // Copy header bytes as-is (sync, addr, length)
                         rx_buffer[copy_write_idx] <= rx_buffer_raw[copy_read_idx];
                         copy_read_idx <= copy_read_idx + 1;
@@ -883,11 +916,11 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     STATE_SEND_READID: begin
                         // Process READID response: E0 00 XX 01 01 [ASCII_NAME] 00 checksum
                         // Example: "namco ltd.;NAJV2;Ver1.00;JPN,Multipurpose."
-                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
+                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
                             // Trigger name copying for current node (current_device_addr - 1 as array index)
                             if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
                                 // Setup name copying: rx_buffer format [E0][00][LEN][01][01][name...][00][checksum]
-                                copy_read_idx <= JVS_DATA_START + 2;    // Start after status and report bytes
+                                copy_read_idx <= JVS_REPORT_POS + 1;    // Start after status and report bytes
                                 copy_write_idx <= 8'd0;                 // Start writing at beginning of name array
                                 rx_state <= RX_COPY_NAME;               // Switch to name copying state
                             end
@@ -900,12 +933,16 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     
                     STATE_SEND_CMDREV: begin
-                        // Process CMDREV response: E0 00 XX 01 YY (where YY is revision in BCD)
+                        // Process CMDREV response: E0 00 XX 01 01 YY (where YY is revision in BCD)
+                        // Format: [sync][addr][len][status][report][data]
                         // Current expected revision is 1.3, so YY should be 0x13
-                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
-                            // Store command revision for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
-                                jvs_nodes_r.node_cmd_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
+                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
+                            // Check report code for errors
+                            if (rx_buffer[JVS_REPORT_POS] == REPORT_NORMAL) begin
+                                // Store command revision for current node (current_device_addr - 1 as array index)
+                                if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                    jvs_nodes_r.node_cmd_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[5] contains revision
+                                end
                             end
                         end
                         // Command processed, signal completion
@@ -915,12 +952,16 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     
                     STATE_SEND_JVSREV: begin
-                        // Process JVSREV response: E0 00 XX 01 YY (where YY is JVS revision in BCD)  
+                        // Process JVSREV response: E0 00 XX 01 01 YY (where YY is JVS revision in BCD)
+                        // Format: [sync][addr][len][status][report][data]
                         // Current expected revision is 3.0, so YY should be 0x30
-                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
-                            // Store JVS revision for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
-                                jvs_nodes_r.node_jvs_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains revision
+                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
+                            // Check report code for errors
+                            if (rx_buffer[JVS_REPORT_POS] == REPORT_NORMAL) begin
+                                // Store JVS revision for current node (current_device_addr - 1 as array index)
+                                if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                    jvs_nodes_r.node_jvs_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[5] contains revision
+                                end
                             end
                         end
                         // Command processed, signal completion
@@ -930,12 +971,16 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     
                     STATE_SEND_COMMVER: begin
-                        // Process COMMVER response: E0 00 XX 01 YY (where YY is comm version in BCD)
+                        // Process COMMVER response: E0 00 XX 01 01 YY (where YY is comm version in BCD)
+                        // Format: [sync][addr][len][status][report][data]
                         // Current expected version is 1.0, so YY should be 0x10  
-                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 3) begin
-                            // Store communication version for current node (current_device_addr - 1 as array index)
-                            if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
-                                jvs_nodes_r.node_com_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[4] contains version
+                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
+                            // Check report code for errors
+                            if (rx_buffer[JVS_REPORT_POS] == REPORT_NORMAL) begin
+                                // Store communication version for current node (current_device_addr - 1 as array index)
+                                if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                    jvs_nodes_r.node_com_ver[current_device_addr - 1] <= rx_buffer[JVS_DATA_START + 1]; // rx_buffer[5] contains version
+                                end
                             end
                         end
                         // Command processed, signal completion
@@ -945,12 +990,16 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     
                     STATE_SEND_FEATCHK: begin
-                        // Process FEATCHK response: E0 00 XX 01 [function_data...] 00
+                        // Process FEATCHK response: E0 00 XX 01 01 [function_data...] 00
+                        // Format: [sync][addr][len][status][report][function_data...]
                         // Contains 4-byte function descriptors followed by 00 terminator
-                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
-                            // Parse feature data (optional - could extract supported functions)
-                            // Format: [func_code][param1][param2][param3] repeating, then 00
-                            // For now we just acknowledge receipt
+                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
+                            // Check report code for errors
+                            if (rx_buffer[JVS_REPORT_POS] == REPORT_NORMAL) begin
+                                // Parse feature data (optional - could extract supported functions)
+                                // Format: [func_code][param1][param2][param3] repeating, then 00
+                                // For now we just acknowledge receipt
+                            end
                         end
                         // Command processed, signal completion
                         rx_frame_complete <= 1'b1;
@@ -961,7 +1010,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     STATE_SEND_INPUTS: begin
                         // Process input data response
                         // Validate response format: E0 00 XX 01 (sync, master addr, length, normal status)
-                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_DATA_START] == STATUS_NORMAL) begin
+                        if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL) begin
                             // Ensure minimum frame size for button data
                             if (rx_buffer[JVS_LENGTH_POS] >= 8) begin
                             

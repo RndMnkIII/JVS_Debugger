@@ -67,6 +67,9 @@
 //cart_tran_bank1[7] ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+     |     |            
 //cart_tran_pin30    ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+     |            
 //cart_tran_pin31    ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+             
+
+//Use: set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1" 
+//in project .qsf to use dummy data for simulation without JVS device
 `default_nettype none
 `timescale 1ns / 1ps
 
@@ -156,7 +159,6 @@ module openFPGA_Pocket_Analogizer #(parameter MASTER_CLK_FREQ=50_000_000, parame
 	output wire [3:0] DBG_TX,
     output wire o_stb
 );
-
 	//Configuration file dat
 	//reg [31:0] analogizer_bridge_rd_data;
 	reg  [31:0] analogizer_config = 0;
@@ -302,68 +304,18 @@ assign analogizer_osd_out        = analogizer_osd_out2;
         .node_name_rd_addr(node_name_rd_addr)
 	); 
 
-	// Assign string for snac_game_cont_type
-	parameter int MAX_DEV     = 21; 
-parameter int MAX_STR_LEN = 30; //stringz
-
-// typedef para una cadena fija
-typedef logic [8 * MAX_STR_LEN-1:0] ascii_str_t ;
-
-// Tabla de cadenas (índice = número de dispositivo)
-localparam ascii_str_t SNACSelectionOptions [0:MAX_DEV-1] = '{
-    //  0
-    "None\0",
-    //  1
-    "DB15 Normal Neogeo/Arcade\0",
-    //  2
-    "NES\0",
-    //  3
-    "SNESd\0",
-    //  4
-    "PCE 2btn\0",
-    //  5
-    "PCE 6btn\0",
-    //  6
-    "PCE Multitap\0",
-    //  7
-    "\0", // void
-    //  8
-    "\0", // void
-    //  9 (0x9)
-    "DB15 Fast Neogeo/Arcade DB15\0",
-    // 10
-    "\0", // void
-    // 11 (0xb)
-    "SNES A,B<->X,Y\0",
-    // 12–16
-    "\0", // void
-	"\0", // void
-	"\0", // void
-	"\0", // void
-	"\0", // void
-    // 17 (0x11)
-    "PSX (Digital PAD)\0",
-    // 18
-    "\0", // void
-    // 19 (0x13)
-    "PSX (Analog PAD)\0",
-    // 20 (0x14)
-    "JVS RS485/RS232 (JVS IO)\0"
-};
-
-function automatic logic [7:0] get_char(
-  input ascii_str_t s, input int j);
-  return s[$bits(s)-1 - 8*j -: 8];    // slice de 8 bits, also works: return s[8*(MAX_STR_LEN-1-j) +: 8];
-endfunction
-
-	//------- Process JVS node name to OSD memory -----------
+	//=========================================================================
+	//------- START Process JVS data and copy strings to OSD memory -----------
+	//=========================================================================
 	logic jvs_data_ready_prev;
 	logic do_proc = 1'b0;
 	logic [5:0] btn_cnt = 6'd0;
 	logic [3:0] hex_nibble;
+	logic [7:0] STR_byte;
+	logic [10:0] next_OSD_wr_addr;
 
-	localparam SNAC_DEVICE_STR_POS = 488;
-	localparam JVS_NODE_NUMBER_POS = 528;
+	localparam SNAC_DEVICE_STR_POS = 528;
+	localparam JVS_NODE_NUMBER_POS = 568;
 	localparam JVS_NODE_NAME_POS = 642;
 	localparam JVS_NODE_NAME_LAST1_POS = JVS_NODE_NAME_POS + 36 - 1;
 	localparam JVS_NODE_NAME_LAST2_POS = JVS_NODE_NAME_LAST1_POS + 40;
@@ -375,78 +327,139 @@ endfunction
 	localparam JVS_P2_BTN_POS = 970;
 	localparam JVS_P2_JOY_POS = 1010;
 
+	// Assign string for snac_game_cont_type
+	parameter int SNAC_ROM_STR_LEN = 32; //stringz
+	logic [9:0] SNAC_ROM_addr; 
+	logic [7:0] SNAC_ROM_data;
+	
 
+	ROM_snac_strings #(
+	.FILENAME("snac_strings.mem")
+	) u_rom (
+	.clk (i_clk),
+	.addr(SNAC_ROM_addr),
+	.data(SNAC_ROM_data)
+	);
+
+	//State machine to copy JVS node name and SNAC device name to OSD memory
 	enum int unsigned {
-		START = 0, 
-		PROCESSING = 1, 
-		SNAC_DEVICE_STR = 2,
-		COPY_CMD_VER1 = 3, 
-		COPY_CMD_VER2 = 4, 
-		COPY_JVS_VER1 = 5, 
-		COPY_JVS_VER2 = 6, 
-		COPY_COM_VER1 = 7, 
-		COPY_COM_VER2 = 8,
-		P1_BTN = 9,
-		P1_JOY = 10,
-		P2_BTN = 11,
-		P2_JOY = 12,
-		EOS = 14
+
+		INIT_JVS_STR   = 0, 
+		COPY_NODEID_VER1= 1,
+		READ_JVS_STR   = 2, 
+		WRITE_JVS_STR  = 3,
+		INIT_SNAC_STR  = 4,
+		WAIT1_SNAC_STR = 5,
+		READ_SNAC_STR  = 6,
+		WRITE_SNAC_STR = 7,
+		COPY_CMD_VER1  = 8, 
+		COPY_CMD_VER2  = 9, 
+		COPY_JVS_VER1  = 10, 
+		COPY_JVS_VER2  = 11, 
+		COPY_COM_VER1  = 12, 
+		COPY_COM_VER2  = 13,
+		P1_BTN         = 14,
+		P1_JOY         = 15,
+		P2_BTN         = 16,
+		P2_JOY         = 17,
+		EOS            = 18
 	} jvs_name_copy_state;
 
-	always @(posedge i_clk) begin
-		jvs_data_ready_prev <= jvs_data_ready; //OSD_VS
-		//jvs_data_ready_prev <= OSD_VS;
-;
+	// Nibble (0..15) a ASCII ('0'..'9','A'..'F' o 'a'..'f')
+	function automatic logic [7:0] hex2ascii(input logic [3:0] v, input logic uppercase);
+		if (v < 10) hex2ascii = "0" + v;
+		else        hex2ascii = (uppercase ? "A" : "a") + (v - 10);
+	endfunction
 
-		if (!jvs_data_ready_prev && jvs_data_ready) begin
-		//if (!jvs_data_ready_prev && OSD_VS) begin
-			jvs_name_copy_state <= START;
-			node_name_rd_addr <= 7'h0; //set initial read address
-			OSD_wr_en <= 1'b0;
-			OSD_wr_addr <= JVS_NODE_NAME_POS; //set start of destination address;		
-			OSD_wr_data <= 8'd0;
+	always @(posedge i_clk) begin
+//see comments in JVS_Debugger.qsf under [JVS project settings] 
+		`ifdef USE_DUMMY_JVS_DATA
+		jvs_data_ready_prev <= OSD_VS;
+		`else 
+		jvs_data_ready_prev <= jvs_data_ready;
+		`endif
+
+		`ifdef USE_DUMMY_JVS_DATA
+	    if (!jvs_data_ready_prev && OSD_VS)
+		`else 
+		if (!jvs_data_ready_prev && jvs_data_ready)
+		`endif
+		begin
+			jvs_name_copy_state <= INIT_JVS_STR;
 			do_proc <= 1'b1;
 		end else if (do_proc) begin
 			case (jvs_name_copy_state)
-				START: begin
-					jvs_name_copy_state <= PROCESSING;
-
-					//update next byte address
-					OSD_wr_data <= node_name_rd_data;
-					OSD_wr_en <= 1'b1;
-					OSD_wr_addr <= JVS_NODE_NAME_POS;
-					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+				INIT_JVS_STR: begin
+					node_name_rd_addr <= 7'h0; //set initial read address
+					next_OSD_wr_addr <= JVS_NODE_NAME_POS;
+					OSD_wr_en <= 1'b0;	//disable write
+					jvs_name_copy_state <=READ_JVS_STR;
 				end
-				PROCESSING: begin
-					if (node_name_rd_data  != 8'h00 && (OSD_wr_addr  < JVS_NODE_NAME_POS + jvs_node_info_pkg::NODE_NAME_SIZE)) begin
-						//write byte to OSD memory
-						//OSD_wr_en <= 1'b1;
-						OSD_wr_data <= node_name_rd_data;
-						
-						//prepare next byte
-						OSD_wr_addr <= (OSD_wr_addr == JVS_NODE_NAME_LAST1_POS || OSD_wr_addr == JVS_NODE_NAME_LAST2_POS) ? OSD_wr_addr + 11'd5 : OSD_wr_addr + 11'd1;	
-						node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+				READ_JVS_STR: begin
+					OSD_wr_en <= 1'b0;	//disable write
+					STR_byte <= node_name_rd_data;
+					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+					jvs_name_copy_state <= WRITE_JVS_STR;
+				end
+
+				// WAIT1_JVS_STR: begin
+				// 	jvs_name_copy_state <= WRITE_JVS_STR;
+				// end
+
+				WRITE_JVS_STR: begin
+					if((STR_byte != 8'h00) && (next_OSD_wr_addr < JVS_NODE_NAME_POS + jvs_node_info_pkg::NODE_NAME_SIZE)) begin
+						//end of string or max size reached
+						OSD_wr_en <= 1'b1; //enable write
+						OSD_wr_data <= STR_byte;
+						OSD_wr_addr <= next_OSD_wr_addr;
+						next_OSD_wr_addr <=(next_OSD_wr_addr == JVS_NODE_NAME_LAST1_POS || next_OSD_wr_addr == JVS_NODE_NAME_LAST2_POS) ? next_OSD_wr_addr + 11'd5 : next_OSD_wr_addr + 11'd1;	 //increment write address for next byte
+						jvs_name_copy_state <= READ_JVS_STR;
 					end else begin
-						OSD_wr_en <= 1'b1;
-						jvs_name_copy_state <= SNAC_DEVICE_STR;
-						OSD_wr_addr <= SNAC_DEVICE_STR_POS;
-						OSD_wr_data <= get_char(SNACSelectionOptions[snac_game_cont_type], btn_cnt);
-						btn_cnt <= 6'd0;
+						OSD_wr_en <= 1'b0;	//disable write
+						jvs_name_copy_state <= INIT_SNAC_STR;
 					end
 				end
-				SNAC_DEVICE_STR: begin
-					if (get_char(SNACSelectionOptions[snac_game_cont_type], btn_cnt)  != 8'h00 && (OSD_wr_addr  < SNAC_DEVICE_STR_POS + MAX_STR_LEN)) begin
-						//write byte to OSD memory
-						OSD_wr_en <= 1'b1;
-						OSD_wr_addr <= SNAC_DEVICE_STR_POS + btn_cnt;
-						OSD_wr_data <= get_char(SNACSelectionOptions[snac_game_cont_type], btn_cnt);
-						btn_cnt <= btn_cnt + 6'd1;
-					end else begin
-						OSD_wr_en <= 1'b0;
-						jvs_name_copy_state <= COPY_CMD_VER1;
-						btn_cnt <= 6'd0;
-					end					
+
+				INIT_SNAC_STR: begin
+					SNAC_ROM_addr <= snac_game_cont_type * SNAC_ROM_STR_LEN; //set initial read address
+					next_OSD_wr_addr <= SNAC_DEVICE_STR_POS;
+					OSD_wr_en <= 1'b0;	//disable write
+					jvs_name_copy_state <= WAIT1_SNAC_STR;
 				end
+				
+				//let ROM one cycle to retrieve data
+				WAIT1_SNAC_STR: begin
+					jvs_name_copy_state <= READ_SNAC_STR;
+				end
+
+				READ_SNAC_STR: begin
+					OSD_wr_en <= 1'b0;	//disable write
+					STR_byte <= SNAC_ROM_data;
+					SNAC_ROM_addr <= SNAC_ROM_addr + 10'd1; //increment read address for next byte
+					jvs_name_copy_state <= WRITE_SNAC_STR;
+				end
+
+				WRITE_SNAC_STR: begin
+					if((STR_byte != 8'h00) && (next_OSD_wr_addr < SNAC_DEVICE_STR_POS + SNAC_ROM_STR_LEN)) begin
+						//end of string or max size reached
+						OSD_wr_en <= 1'b1; //enable write
+						OSD_wr_data <= STR_byte;
+						OSD_wr_addr <= next_OSD_wr_addr;
+						next_OSD_wr_addr <= next_OSD_wr_addr  + 11'd1; //increment write address for next byte
+						jvs_name_copy_state <= READ_SNAC_STR;
+					end else begin
+						OSD_wr_en <= 1'b0;	//disable write
+						jvs_name_copy_state <= COPY_NODEID_VER1;
+					end
+				end
+				COPY_NODEID_VER1: begin
+					jvs_name_copy_state <= COPY_CMD_VER1;
+					//write byte to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_NUMBER_POS;
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_id[0][3:0]; //LS nibble
+				end
+
 				COPY_CMD_VER1: begin
 					jvs_name_copy_state <= COPY_CMD_VER2;
 					//write byte to OSD memory
@@ -454,6 +467,7 @@ endfunction
 					OSD_wr_addr <= JVS_NODE_CMD_POS;
 					OSD_wr_data <= 8'h30 + jvs_nodes.node_cmd_ver[0][7:4]; //LS nibble
 				end
+
 				COPY_CMD_VER2: begin
 					jvs_name_copy_state <= COPY_JVS_VER1;
 					//write byte to OSD memory
@@ -468,6 +482,7 @@ endfunction
 					OSD_wr_addr <= JVS_NODE_JVS_POS;
 					OSD_wr_data <= 8'h30 + jvs_nodes.node_jvs_ver[0][7:4]; //LS nibble
 				end
+
 				COPY_JVS_VER2: begin
 					jvs_name_copy_state <= COPY_COM_VER1;
 					//write byte to OSD memory
@@ -475,6 +490,7 @@ endfunction
 					OSD_wr_addr <= JVS_NODE_JVS_POS + 11'd1;
 					OSD_wr_data <= 8'h30 +jvs_nodes.node_jvs_ver[0][3:0]; //MS nibble
 				end
+				
 				COPY_COM_VER1: begin
 					jvs_name_copy_state <= COPY_COM_VER2;
 					//write byte to OSD memory
@@ -482,13 +498,15 @@ endfunction
 					OSD_wr_addr <= JVS_NODE_COM_POS;
 					OSD_wr_data <= 8'h30 + jvs_nodes.node_com_ver[0][7:4]; //LS nibble
 				end
+
 				COPY_COM_VER2: begin
 					jvs_name_copy_state <= P1_BTN;
 					//write byte to OSD memory
 					OSD_wr_en <= 1'b1;
 					OSD_wr_addr <= JVS_NODE_COM_POS + 11'd1;
 					OSD_wr_data <= 8'h30 +jvs_nodes.node_com_ver[0][3:0]; //MS nibble
-				end				
+				end
+
 				P1_BTN: begin
 					if (btn_cnt < 6'd15) begin
 						btn_cnt <= btn_cnt + 6'd1;
@@ -500,6 +518,7 @@ endfunction
 						jvs_name_copy_state <= P2_BTN;
 					end
 				end
+
 				P2_BTN: begin
 					if (btn_cnt < 6'd15) begin
 						btn_cnt <= btn_cnt + 6'd1;
@@ -511,6 +530,7 @@ endfunction
 						jvs_name_copy_state <= P1_JOY;
 					end
 				end
+
 				P1_JOY: begin
 					if (btn_cnt < 6'd8) begin
 						btn_cnt <= btn_cnt + 6'd1;
@@ -532,6 +552,7 @@ endfunction
 						jvs_name_copy_state <= P2_JOY;
 					end
 				end
+
 				P2_JOY: begin
 					if (btn_cnt < 6'd8) begin
 						btn_cnt <= btn_cnt + 6'd1;
@@ -548,21 +569,25 @@ endfunction
 							3'd7: OSD_wr_data <= hex2ascii(p2_joy_state[3:0], 1'b1);
 						endcase
 					end else begin
-						btn_cnt <= 6'd0;
 						OSD_wr_en <= 1'b0;
 						jvs_name_copy_state <= EOS;
 					end
 				end
+
 				EOS: begin
 						OSD_wr_addr <= 11'd0;		
 						OSD_wr_data <= 8'd0;
 						node_name_rd_addr <= 7'h0;
+						SNAC_ROM_addr <= 10'd0;
+						btn_cnt <= 6'd0;
 						do_proc <= 1'b0;
 				end
 			endcase
 		end	
 	end
-	//--------------------------------------------------------
+	//=========================================================================
+	//------- END Process JVS data and copy strings to OSD memory -----------
+	//=========================================================================
 
 //---------------------------------------------------------------------
 // Debug OSD
@@ -575,8 +600,8 @@ endfunction
     logic        OSD_wr_en=1'b0;
 
    osd_top #(
-   		.CLK_HZ(MASTER_CLK_FREQ),
-   		.COLS(40),
+   	.CLK_HZ(MASTER_CLK_FREQ),
+   	.COLS(40),
 		.ROWS(30)
    ) osd_debug_inst (
        .clk(i_clk),

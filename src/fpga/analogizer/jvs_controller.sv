@@ -168,6 +168,31 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam JVS_ESCAPED_E0 = 8'hDF;       // E0 becomes D0 DF
     localparam JVS_ESCAPED_D0 = 8'hCF;       // D0 becomes D0 CF
     
+    // JVS Function codes for feature parsing
+    localparam JVS_FUNC_INPUT_DIGITAL = 8'h01;      // Digital input function
+    localparam JVS_FUNC_INPUT_COIN = 8'h02;         // Coin input function
+    localparam JVS_FUNC_INPUT_ANALOG = 8'h03;       // Analog input function  
+    localparam JVS_FUNC_INPUT_ROTARY = 8'h04;       // Rotary encoder function
+    localparam JVS_FUNC_INPUT_KEYCODE = 8'h05;      // Keycode input function
+    localparam JVS_FUNC_INPUT_SCREEN_POS = 8'h06;   // Screen position input aka. touch
+    localparam JVS_FUNC_INPUT_MISC_DIGITAL = 8'h07; // Suplementary digital input
+
+    localparam JVS_FUNC_OUTPUT_CARD = 8'h10;    // Number of output card System ?
+    localparam JVS_FUNC_OUTPUT_MEDALS = 8'h11;  // Aka. Redemption dispenser
+    localparam JVS_FUNC_OUTPUT_DIGITAL = 8'h12; // Digital output function (lights or guns recoil)
+    localparam JVS_FUNC_OUTPUT_ANALOG = 8'h13;  // Analog output function (light intensity on namco noir)
+    localparam JVS_FUNC_OUTPUT_CHAR_DEVICE = 8'h14; // Text LCD display or Printer
+    localparam JVS_FUNC_OUTPUT_BACKUP = 8'h15; // Has backup data for data such as number of coins (?)
+
+    localparam JVS_FUNC_LENGTH = 8'd4;          // Each function block is 4 bytes long
+    
+    // Character Output Type codes (Table 9)
+    localparam JVS_CHAR_TYPE_UNKNOWN = 8'h00;           // Unknown
+    localparam JVS_CHAR_TYPE_ASCII_NUMERIC = 8'h01;     // ASCII (numeric)
+    localparam JVS_CHAR_TYPE_ASCII_ALPHANUM = 8'h02;    // ASCII (alphanumeric)
+    localparam JVS_CHAR_TYPE_ASCII_KATAKANA = 8'h03;    // ASCII (alphanumeric, half-width katakana)
+    localparam JVS_CHAR_TYPE_ASCII_KANJI = 8'h04;       // ASCII (kanji support, SHIFT-JIS)
+    
     // JVS Frame structure constants for better code readability
     localparam JVS_SYNC_POS = 8'd0;          // Position of sync byte (E0)
     localparam JVS_ADDR_POS = 8'd1;          // Position of address byte
@@ -225,6 +250,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam RX_UNESCAPE = 3'h4;            // Copy from raw buffer to final buffer, processing escapes
     localparam RX_PROCESS = 3'h5;             // Processing complete and unescaped frame
     localparam RX_COPY_NAME = 3'h6;           // Copy node name from response data
+    localparam RX_PARSE_FEATURES = 3'h7;      // Parse feature/capability data
 
     //=========================================================================
     // STATE VARIABLES AND CONTROL REGISTERS
@@ -273,7 +299,30 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
         node_id: '{8'h01, 8'h02},
         node_cmd_ver: '{8'h13, 8'h11}, 
         node_jvs_ver: '{8'h30, 8'h30},  
-        node_com_ver: '{8'h10, 8'h10}   
+        node_com_ver: '{8'h10, 8'h10},
+        // Initialize dummy capabilities based on typical JVS device
+        node_players: '{4'h2, 4'h1},              // 2 players for first device, 1 for second
+        node_buttons: '{8'h0D, 8'h06},            // 13 buttons for P1, 6 for P2
+        node_analog_channels: '{4'h2, 4'h0},      // 2 analog channels for first device
+        node_analog_bits: '{8'h0A, 8'h08},        // 10-bit analog for first device, 8-bit for second
+        node_rotary_channels: '{4'h0, 4'h0},      // No rotary encoders
+        node_coin_slots: '{4'h2, 4'h1},           // 2 coin slots for first device, 1 for second
+        // Additional input capabilities
+        node_has_keycode_input: '{1'b0, 1'b0},    // No keycode input
+        node_has_screen_pos: '{1'b0, 1'b0},       // No screen position input
+        node_screen_pos_x_bits: '{8'h00, 8'h00},  // No screen X resolution
+        node_screen_pos_y_bits: '{8'h00, 8'h00},  // No screen Y resolution  
+        node_misc_digital_inputs: '{16'h0000, 16'h0000}, // No misc digital inputs (16-bit)
+        // Output capabilities
+        node_digital_outputs: '{8'h08, 8'h00},    // 8 digital outputs for first device
+        node_analog_output_channels: '{4'h2, 4'h0}, // 2 analog output channels for first device
+        node_card_system_slots: '{8'h00, 8'h00},  // No card system slots
+        node_medal_hopper_channels: '{8'h00, 8'h00}, // No medal hopper channels
+        node_has_char_display: '{1'b0, 1'b0},     // No character display
+        node_char_display_width: '{8'h00, 8'h00}, // No character display width
+        node_char_display_height: '{8'h00, 8'h00}, // No character display height
+        node_char_display_type: '{8'h00, 8'h00},   // No character display type
+        node_has_backup: '{1'b0, 1'b0}            // No backup support
     };
     assign jvs_nodes = jvs_nodes_r2;
 `else 
@@ -383,7 +432,6 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             timeout_counter <= 32'h0;
             poll_timer <= 32'h0;
             current_device_addr <= 8'h01;    // Standard JVS device address
-            jvs_nodes_r.node_id[0] <= 8'h01;
             rs485_tx_request <= 1'b0;
             uart_tx_dv <= 1'b0;
             last_tx_state <= 5'h0;
@@ -746,6 +794,32 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             rx_length <= 8'h00;
             rx_checksum <= 8'h00;
             
+            // Initialize JVS node information (single node only)
+            jvs_nodes_r.node_id[0] <= 8'h01;
+            jvs_nodes_r.node_cmd_ver[0] <= 8'h00;
+            jvs_nodes_r.node_jvs_ver[0] <= 8'h00;
+            jvs_nodes_r.node_com_ver[0] <= 8'h00;
+            jvs_nodes_r.node_players[0] <= 4'h0;
+            jvs_nodes_r.node_buttons[0] <= 8'h0;
+            jvs_nodes_r.node_analog_channels[0] <= 4'h0;
+            jvs_nodes_r.node_rotary_channels[0] <= 4'h0;
+            // Additional input capabilities (not yet supported)
+            jvs_nodes_r.node_has_keycode_input[0] <= 1'b0;
+            jvs_nodes_r.node_has_screen_pos[0] <= 1'b0;
+            jvs_nodes_r.node_screen_pos_x_bits[0] <= 8'h0;
+            jvs_nodes_r.node_screen_pos_y_bits[0] <= 8'h0;
+            jvs_nodes_r.node_misc_digital_inputs[0] <= 16'h0;
+            // Output capabilities
+            jvs_nodes_r.node_digital_outputs[0] <= 8'h0;
+            jvs_nodes_r.node_analog_output_channels[0] <= 4'h0;
+            jvs_nodes_r.node_card_system_slots[0] <= 8'h0;
+            jvs_nodes_r.node_medal_hopper_channels[0] <= 8'h0;
+            jvs_nodes_r.node_has_char_display[0] <= 1'b0;
+            jvs_nodes_r.node_char_display_width[0] <= 8'h0;
+            jvs_nodes_r.node_char_display_height[0] <= 8'h0;
+            jvs_nodes_r.node_char_display_type[0] <= 8'h0;
+            jvs_nodes_r.node_has_backup[0] <= 1'b0;
+            
             // Initialize output button and joystick states
             p1_btn_state <= 16'h0000;           // All buttons released
             p1_joy_state <= 32'h80808080;       // Analog sticks centered (0x80 = center)
@@ -908,6 +982,124 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             end
 
             //-------------------------------------------------------------
+            // RX_PARSE_FEATURES - Parse JVS feature/capability data
+            //-------------------------------------------------------------
+            if (rx_state == RX_PARSE_FEATURES) begin
+                // Parse feature data format: [func_code][param1][param2][param3] repeating, then 00
+                // copy_read_idx points to current function code position
+                if (copy_read_idx < (JVS_OVERHEAD + rx_buffer[JVS_LENGTH_POS]) && 
+                    copy_read_idx + JVS_FUNC_LENGTH - 1 < (JVS_OVERHEAD + rx_buffer[JVS_LENGTH_POS])) begin
+                    
+                    // Check for terminator (00 byte)
+                    if (rx_buffer[copy_read_idx] == 8'h00) begin
+                        // Feature parsing complete
+                        rx_frame_complete <= 1'b1;
+                        rx_counter <= 8'h00;
+                        rx_state <= RX_IDLE;
+                    end else begin
+                        // Parse function block [func_code][param1][param2][param3]
+                        case (rx_buffer[copy_read_idx])
+                            //=========================================================
+                            // INPUT FUNCTIONS (0x01 - 0x07)
+                            //=========================================================
+                            
+                            JVS_FUNC_INPUT_DIGITAL: begin // 0x01
+                                // Digital input: param1=players, param2=buttons config
+                                jvs_nodes_r.node_players[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
+                                jvs_nodes_r.node_buttons[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
+                            end
+                            
+                            JVS_FUNC_INPUT_COIN: begin // 0x02
+                                // Coin input: param1=number of coin slots
+                                jvs_nodes_r.node_coin_slots[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
+                            end
+                            
+                            JVS_FUNC_INPUT_ANALOG: begin // 0x03
+                                // Analog input: param1=number of channels, param2=bits of precision
+                                jvs_nodes_r.node_analog_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
+                                jvs_nodes_r.node_analog_bits[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
+                            end
+                            
+                            JVS_FUNC_INPUT_ROTARY: begin // 0x04
+                                // Rotary input: param1=number of channels
+                                jvs_nodes_r.node_rotary_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
+                            end
+                            
+                            JVS_FUNC_INPUT_KEYCODE: begin // 0x05
+                                // Keycode input function - PARSED BUT NOT SUPPORTED YET
+                                // Parameters: 0, 0, 0 (no parameters according to JVS spec)
+                                jvs_nodes_r.node_has_keycode_input[current_device_addr - 1] <= 1'b1;
+                            end
+                            
+                            JVS_FUNC_INPUT_SCREEN_POS: begin // 0x06
+                                // Screen position input (touch/lightgun) - PARSED BUT NOT SUPPORTED YET
+                                // Parameters: Xbits, Ybits, channels (resolution only, not position)
+                                jvs_nodes_r.node_has_screen_pos[current_device_addr - 1] <= 1'b1;
+                                jvs_nodes_r.node_screen_pos_x_bits[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
+                                jvs_nodes_r.node_screen_pos_y_bits[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
+                            end
+                            
+                            JVS_FUNC_INPUT_MISC_DIGITAL: begin // 0x07
+                                // Miscellaneous digital input - PARSED BUT NOT SUPPORTED YET
+                                // Parameters: SW MSB, SW LSB, 0 (16-bit switch count)
+                                jvs_nodes_r.node_misc_digital_inputs[current_device_addr - 1] <= {rx_buffer[copy_read_idx + 1], rx_buffer[copy_read_idx + 2]};
+                            end
+                            
+                            //=========================================================
+                            // OUTPUT FUNCTIONS (0x10 - 0x15)
+                            //=========================================================
+                            
+                            JVS_FUNC_OUTPUT_CARD: begin // 0x10
+                                // Card system output - PARSED BUT NOT SUPPORTED YET
+                                jvs_nodes_r.node_card_system_slots[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
+                            end
+                            
+                            JVS_FUNC_OUTPUT_MEDALS: begin // 0x11
+                                // Medal hopper output - PARSED BUT NOT SUPPORTED YET
+                                jvs_nodes_r.node_medal_hopper_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
+                            end
+                            
+                            JVS_FUNC_OUTPUT_DIGITAL: begin // 0x12
+                                // Digital output: param1=number of outputs
+                                jvs_nodes_r.node_digital_outputs[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
+                            end
+                            
+                            JVS_FUNC_OUTPUT_ANALOG: begin // 0x13
+                                // Analog output: param1=number of channels
+                                jvs_nodes_r.node_analog_output_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
+                            end
+                            
+                            JVS_FUNC_OUTPUT_CHAR_DEVICE: begin // 0x14
+                                // Character/text display output - PARSED BUT NOT SUPPORTED YET
+                                // Parameters: width, height, type
+                                jvs_nodes_r.node_has_char_display[current_device_addr - 1] <= 1'b1;
+                                jvs_nodes_r.node_char_display_width[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
+                                jvs_nodes_r.node_char_display_height[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
+                                jvs_nodes_r.node_char_display_type[current_device_addr - 1] <= rx_buffer[copy_read_idx + 3];
+                            end
+                            
+                            JVS_FUNC_OUTPUT_BACKUP: begin // 0x15
+                                // Backup data function - PARSED BUT NOT SUPPORTED YET
+                                jvs_nodes_r.node_has_backup[current_device_addr - 1] <= 1'b1;
+                            end
+                            
+                            default: begin
+                                // Unknown function code, skip it
+                            end
+                        endcase
+                        
+                        // Advance to next function block (JVS_FUNC_LENGTH bytes per function)
+                        copy_read_idx <= copy_read_idx + JVS_FUNC_LENGTH;
+                    end
+                end else begin
+                    // Reached end of data, complete parsing
+                    rx_frame_complete <= 1'b1;
+                    rx_counter <= 8'h00;
+                    rx_state <= RX_IDLE;
+                end
+            end
+
+            //-------------------------------------------------------------
             // RX_PROCESS - Process complete valid frames
             //-------------------------------------------------------------
             if (rx_state == RX_PROCESS) begin
@@ -996,15 +1188,19 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL && rx_buffer[JVS_LENGTH_POS] >= 4) begin
                             // Check report code for errors
                             if (rx_buffer[JVS_REPORT_POS] == REPORT_NORMAL) begin
-                                // Parse feature data (optional - could extract supported functions)
-                                // Format: [func_code][param1][param2][param3] repeating, then 00
-                                // For now we just acknowledge receipt
+                                // Parse feature data - Format: [func_code][param1][param2][param3] repeating, then 00
+                                if (current_device_addr > 0 && current_device_addr <= jvs_node_info_pkg::MAX_JVS_NODES) begin
+                                    // Parse function blocks: start at JVS_DATA_START + 1 (after report byte)
+                                    copy_read_idx <= JVS_DATA_START + 1;  // Start after status and report bytes  
+                                    rx_state <= RX_PARSE_FEATURES;        // Switch to feature parsing state
+                                end
                             end
+                        end else begin
+                            // Invalid or error response, signal completion anyway
+                            rx_frame_complete <= 1'b1;
+                            rx_counter <= 8'h00;
+                            rx_state <= RX_IDLE;
                         end
-                        // Command processed, signal completion
-                        rx_frame_complete <= 1'b1;
-                        rx_counter <= 8'h00;
-                        rx_state <= RX_IDLE;
                     end
                     
                     STATE_SEND_INPUTS: begin

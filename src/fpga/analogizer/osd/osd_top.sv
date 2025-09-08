@@ -37,7 +37,12 @@ module osd_top #(
     //memory write interface
     input logic [10:0] wr_addr,
     input logic [7:0]  wr_data,
-    input logic        wr_en
+    input logic        wr_en,
+
+    //gun interface x,y,trigger
+    input logic gun_trigger,
+    input logic [11:0] gun_x,
+    input logic [11:0] gun_y
 );
 
   // RAM de caracteres compartida
@@ -124,10 +129,69 @@ module osd_top #(
     assign Ggrayout = (G_d2 >> 1) + (OSD_GRAY >> 2);
     assign Bgrayout = (B_d2 >> 1) + (OSD_GRAY >> 2);
 
-    assign {R_out, G_out, B_out} = (video_osd[24] == 1'b0) ? video_osd[23:0] : (osd_active ? {Rgrayout,Ggrayout,Bgrayout} :{R_d2, G_d2, B_d2});
-    assign hsync_out = hsync_d2;
-    assign vsync_out = vsync_d2;
-    assign hblank_out = hblank_d2;
-    assign vblank_out = vblank_d2;
+    //assign {R_out, G_out, B_out} = (video_osd[24] == 1'b0) ? video_osd[23:0] : (osd_active ? {Rgrayout,Ggrayout,Bgrayout} :{R_d2, G_d2, B_d2});
+    // assign hsync_out = hsync_d2;
+    // assign vsync_out = vsync_d2;
+    // assign hblank_out = hblank_d2;
+    // assign vblank_out = vblank_d2;
 
+    //cross drawing helper function
+    function automatic logic is_around (
+        input logic [11:0] val,      // value to check
+        input logic [11:0] reference,      // reference value
+        input logic [11:0] tol,      // tolerance
+        input logic [11:0] max_val   // max value to avoid overflow
+    );
+        logic [11:0] lower, upper;
+        logic [12:0] sum_w;          // for overflow en ref+tol
+
+        begin
+            // saturated lower limit
+            if (reference < tol)
+                lower = 12'd0;
+            else
+                lower = reference - tol;
+
+            // saturated upper limit
+            sum_w = {1'b0, reference} + {1'b0, tol};
+            if (sum_w[12] || (sum_w[11:0] > max_val))
+                upper = max_val;
+            else
+                upper = sum_w[11:0];
+
+            // Result: true if val is within [lower, upper]
+            return (val >= lower) && (val <= upper);
+        end
+    endfunction
+
+    logic hit_x, hit_y, gun_trigger_d;
+    logic gun_xr, gun_yr, x_pixr, y_pixr;
+    localparam int GUN_CROSS_SIZE = 4;
+
+    always_ff @(posedge clk) begin
+        hit_x <= is_around(x_pix, gun_x, GUN_CROSS_SIZE, 319);
+        hit_y <= is_around(y_pix, gun_y, GUN_CROSS_SIZE, 239);
+        gun_xr <= gun_x;
+        gun_yr <= gun_y;
+        x_pixr <= x_pix;
+        y_pixr <= y_pix;
+        gun_trigger_d <= gun_trigger;
+
+
+        //if((hit_x && !hit_y) || (!hit_x && hit_y)) begin //crosslines
+        //if(hit_x && hit_y) begin //box
+        if((hit_x && y_pixr == gun_yr) || (hit_y && x_pixr == gun_xr)) begin //crosshair
+            if(gun_trigger_d)
+                {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; //red
+            else
+                {R_out, G_out, B_out} <= {8'h00, 8'hFF, 8'h00}; //green
+        end
+        else
+            {R_out, G_out, B_out} <= (video_osd[24] == 1'b0) ? video_osd[23:0] : (osd_active ? {Rgrayout,Ggrayout,Bgrayout} :{R_d2, G_d2, B_d2});
+
+        hsync_out  <= hsync_d2;
+        vsync_out  <= vsync_d2;
+        hblank_out <= hblank_d2;
+        vblank_out <= vblank_d2;
+    end
 endmodule

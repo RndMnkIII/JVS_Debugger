@@ -907,19 +907,12 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		//memory write interface
 		.wr_en(OSD_wr_en),
 		.wr_addr(OSD_wr_addr),
-		.wr_data(OSD_wr_data)
+		.wr_data(OSD_wr_data),
+		//JVS Light crosshair
+		.gun_trigger(1'b0),
+    	.gun_x(12'd159),
+    	.gun_y(12'd119)
    );
-
-	reg vsync_r;
-	reg init_r;
-	always @(posedge i_clk) begin
-		vsync_r <= Vsync;
-		init_r <= 1'b0;
-
-		if(vsync_r & ~Vsync) begin
-			init_r <= 1'b1;
-		end
-	end
 
    assign OSD_out_R =OSD_R;
    assign OSD_out_G =OSD_G;
@@ -1026,7 +1019,7 @@ end
 	end
 
 	wire YPbPr_sync, YPbPr_blank;
-	vga_out ybpr_video
+	vga_out_fixed ybpr_video
 	(
 		.clk(video_clk),
 		.ypbpr_en(1'b1),

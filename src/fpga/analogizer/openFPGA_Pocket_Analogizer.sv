@@ -313,18 +313,26 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 	logic [3:0] hex_nibble;
 	logic [7:0] STR_byte;
 	logic [10:0] next_OSD_wr_addr;
+	logic [7:0] buttons_decimal; // Decimal value of buttons for display
+	logic [7:0] analog_bits_decimal; // Decimal value of analog bits for display
 
 	localparam SNAC_DEVICE_STR_POS = 528;
 	localparam JVS_NODE_NUMBER_POS = 568;
-	localparam JVS_NODE_NAME_POS = 642;
-	localparam JVS_NODE_NAME_LAST1_POS = JVS_NODE_NAME_POS + 36 - 1;
-	localparam JVS_NODE_NAME_LAST2_POS = JVS_NODE_NAME_LAST1_POS + 40;
-	localparam JVS_NODE_CMD_POS = 770;
-	localparam JVS_NODE_JVS_POS = 810;
-	localparam JVS_NODE_COM_POS = 850;
-	localparam JVS_P1_BTN_POS = 890;
+	localparam JVS_NODE_BRAND_POS = 608;     // Row 15, Col 8 - Position after "BRAND:" colon (shifted 1 left)
+	localparam JVS_NODE_MODEL_POS = 648;     // Row 16, Col 8 - Position after "MODEL:" colon (shifted 1 left)
+	localparam JVS_NODE_NAME_LAST1_POS = JVS_NODE_BRAND_POS + 29 - 1;   // End of BRAND line
+	localparam JVS_NODE_NAME_LAST2_POS = JVS_NODE_MODEL_POS + 30 - 1;   // End of MODEL line (+1)
+	localparam JVS_NODE_NAME_LAST3_POS = JVS_NODE_NAME_LAST2_POS + 40;   // Next line for MODEL overflow
+	localparam JVS_NODE_CMD_POS = 770;  // Row 19, Col 10 - Position after "CMD VER:" colon (with space from border)
+	localparam JVS_NODE_JVS_POS = 810;  // Row 20, Col 10 - Position after "JVS VER:" colon (with space from border)
+	localparam JVS_NODE_COM_POS = 850;  // Row 21, Col 10 - Position after "COM VER:" colon (with space from border)
+	// New positions for capability information - aligned colons at column 25
+	localparam JVS_NODE_PLAYERS_POS = 774;   // Row 19, Col 14 - SWITCH label start (shifted 1 left)
+	localparam JVS_NODE_ANALOG_POS = 821;    // Row 20, Col 21 - Position after ANALOG: colon (after space adjustment)
+	localparam JVS_NODE_FEATURES_POS = 864;  // Row 21, Col 24 - Position after Features: colon (after space adjustment)
+	localparam JVS_P1_BTN_POS = 891;  // Row 22, Col 11 - Position after "P1 BTN :" colon (moved closer to border)
 	localparam JVS_P1_JOY_POS = 930;
-	localparam JVS_P2_BTN_POS = 970;
+	localparam JVS_P2_BTN_POS = 971;  // Row 24, Col 11 - Position after "P2 BTN :" colon (moved closer to border)
 	localparam JVS_P2_JOY_POS = 1010;
 
 	// Assign string for snac_game_cont_type
@@ -347,23 +355,52 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		INIT_JVS_STR   = 0, 
 		COPY_NODEID_VER1= 1,
 		READ_JVS_STR   = 2, 
-		WRITE_JVS_STR  = 3,
-		INIT_SNAC_STR  = 4,
-		WAIT1_SNAC_STR = 5,
-		READ_SNAC_STR  = 6,
-		WRITE_SNAC_STR = 7,
-		COPY_CMD_VER1  = 8, 
-		COPY_CMD_VER2  = 9, 
-		COPY_JVS_VER1  = 10, 
-		COPY_JVS_VER2  = 11, 
-		COPY_COM_VER1  = 12, 
-		COPY_COM_VER2  = 13,
-		P1_BTN         = 14,
-		P1_JOY         = 15,
-		P2_BTN         = 16,
-		P2_JOY         = 17,
-		EOS            = 18
+		WRITE_BRAND_STR  = 3,
+		SEARCH_SEMICOLON = 4,
+		INIT_MODEL_STR = 5,
+		READ_MODEL_STR = 6, 
+		WRITE_MODEL_STR = 7,
+		INIT_SNAC_STR  = 8,
+		WAIT1_SNAC_STR = 9,
+		READ_SNAC_STR  = 10,
+		WRITE_SNAC_STR = 11,
+		COPY_CMD_VER1  = 12, 
+		COPY_CMD_VER2  = 13, 
+		COPY_JVS_VER1  = 14, 
+		COPY_JVS_VER2  = 15, 
+		COPY_COM_VER1  = 16, 
+		COPY_COM_VER2  = 17,
+		WRITE_INPUTS_PLAYERS = 18,
+		WRITE_INPUTS_P = 19,
+		WRITE_INPUTS_BUTTONS_TENS = 20,
+		WRITE_INPUTS_BUTTONS_UNITS = 21,
+		WRITE_INPUTS_B = 22,
+		WRITE_ANALOG_INFO = 23,
+		WRITE_ANALOG_CH = 24,
+		WRITE_ANALOG_H = 25,
+		WRITE_ANALOG_BITS_TENS = 26,
+		WRITE_ANALOG_BITS_UNITS = 27,
+		WRITE_ANALOG_B = 28,
+		WRITE_COIN_INFO = 29,
+		WRITE_FEATURES_R = 30,
+		WRITE_FEATURES_K = 31,
+		WRITE_FEATURES_S = 32,
+		WRITE_FEATURES_D = 33,
+		WRITE_FEATURES_A = 34,
+		WRITE_FEATURES_C = 35,
+		WRITE_FEATURES_M = 36,
+		WRITE_FEATURES_T = 37,
+		WRITE_FEATURES_B = 38,
+		P1_BTN         = 39,
+		P1_JOY         = 40,
+		P2_BTN         = 41,
+		P2_JOY         = 42,
+		EOS            = 43
 	} jvs_name_copy_state;
+
+	// Variables for BRAND/MODEL parsing
+	logic [6:0] semicolon_addr;  // Address where semicolon was found
+	logic semicolon_found;       // Flag indicating semicolon was found
 
 	// Nibble (0..15) a ASCII ('0'..'9','A'..'F' o 'a'..'f')
 	function automatic logic [7:0] hex2ascii(input logic [3:0] v, input logic uppercase);
@@ -391,7 +428,9 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 			case (jvs_name_copy_state)
 				INIT_JVS_STR: begin
 					node_name_rd_addr <= 7'h0; //set initial read address
-					next_OSD_wr_addr <= JVS_NODE_NAME_POS;
+					next_OSD_wr_addr <= JVS_NODE_BRAND_POS;  // Start with BRAND
+					semicolon_found <= 1'b0;  // Reset semicolon flag
+					semicolon_addr <= 7'h0;   // Reset semicolon address
 					OSD_wr_en <= 1'b0;	//disable write
 					jvs_name_copy_state <=READ_JVS_STR;
 				end
@@ -399,22 +438,57 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 					OSD_wr_en <= 1'b0;	//disable write
 					STR_byte <= node_name_rd_data;
 					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
-					jvs_name_copy_state <= WRITE_JVS_STR;
+					jvs_name_copy_state <= WRITE_BRAND_STR;
 				end
 
 				// WAIT1_JVS_STR: begin
 				// 	jvs_name_copy_state <= WRITE_JVS_STR;
 				// end
 
-				WRITE_JVS_STR: begin
-					if((STR_byte != 8'h00) && (next_OSD_wr_addr < JVS_NODE_NAME_POS + jvs_node_info_pkg::NODE_NAME_SIZE)) begin
-						//end of string or max size reached
+				WRITE_BRAND_STR: begin
+					if((STR_byte != 8'h00) && (next_OSD_wr_addr < JVS_NODE_NAME_LAST1_POS)) begin
+						if (STR_byte == 8'h3B) begin // Semicolon found (';' = 0x3B)
+							semicolon_found <= 1'b1;
+							semicolon_addr <= node_name_rd_addr - 7'd1; // Save position after semicolon
+							jvs_name_copy_state <= INIT_MODEL_STR;
+						end else begin
+							//write brand character
+							OSD_wr_en <= 1'b1; //enable write
+							OSD_wr_data <= STR_byte;
+							OSD_wr_addr <= next_OSD_wr_addr;
+							next_OSD_wr_addr <= next_OSD_wr_addr + 11'd1;	 //increment write address for next byte
+							jvs_name_copy_state <= READ_JVS_STR;
+						end
+					end else begin
+						// End of string or max BRAND size reached
+						OSD_wr_en <= 1'b0;	//disable write
+						jvs_name_copy_state <= INIT_SNAC_STR;
+					end
+				end
+
+				INIT_MODEL_STR: begin
+					next_OSD_wr_addr <= JVS_NODE_MODEL_POS;  // Switch to MODEL position
+					OSD_wr_en <= 1'b0;	//disable write
+					jvs_name_copy_state <= READ_MODEL_STR;
+				end
+
+				READ_MODEL_STR: begin
+					OSD_wr_en <= 1'b0;	//disable write
+					STR_byte <= node_name_rd_data;
+					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+					jvs_name_copy_state <= WRITE_MODEL_STR;
+				end
+
+				WRITE_MODEL_STR: begin
+					if((STR_byte != 8'h00) && (next_OSD_wr_addr < JVS_NODE_NAME_LAST3_POS)) begin
+						//write model character
 						OSD_wr_en <= 1'b1; //enable write
 						OSD_wr_data <= STR_byte;
 						OSD_wr_addr <= next_OSD_wr_addr;
-						next_OSD_wr_addr <=(next_OSD_wr_addr == JVS_NODE_NAME_LAST1_POS || next_OSD_wr_addr == JVS_NODE_NAME_LAST2_POS) ? next_OSD_wr_addr + 11'd5 : next_OSD_wr_addr + 11'd1;	 //increment write address for next byte
-						jvs_name_copy_state <= READ_JVS_STR;
+						next_OSD_wr_addr <=(next_OSD_wr_addr == JVS_NODE_NAME_LAST2_POS) ? next_OSD_wr_addr + 11'd11 : next_OSD_wr_addr + 11'd1; //jump to next line if needed
+						jvs_name_copy_state <= READ_MODEL_STR;
 					end else begin
+						// End of string or max MODEL size reached
 						OSD_wr_en <= 1'b0;	//disable write
 						jvs_name_copy_state <= INIT_SNAC_STR;
 					end
@@ -500,11 +574,220 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 				end
 
 				COPY_COM_VER2: begin
-					jvs_name_copy_state <= P1_BTN;
+					jvs_name_copy_state <= WRITE_INPUTS_PLAYERS;
 					//write byte to OSD memory
 					OSD_wr_en <= 1'b1;
 					OSD_wr_addr <= JVS_NODE_COM_POS + 11'd1;
 					OSD_wr_data <= 8'h30 +jvs_nodes.node_com_ver[0][3:0]; //MS nibble
+				end
+
+				WRITE_INPUTS_PLAYERS: begin
+					jvs_name_copy_state <= WRITE_INPUTS_P;
+					//write number of players
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd7; // After "SWITCH:" for players in compact format
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_players[0][3:0]; // Convert to ASCII digit
+				end
+
+				WRITE_INPUTS_P: begin
+					jvs_name_copy_state <= WRITE_INPUTS_BUTTONS_TENS;
+					//write "P" and calculate decimal value
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd8; // 'P' in compact format
+					OSD_wr_data <= 8'h50; // 'P'
+					// Convert hex to decimal for display
+					buttons_decimal <= jvs_nodes.node_buttons[0];
+				end
+
+				WRITE_INPUTS_BUTTONS_TENS: begin
+					jvs_name_copy_state <= WRITE_INPUTS_BUTTONS_UNITS;
+					//write tens digit only if >= 10 (skip completely for single digits)
+					if (buttons_decimal >= 8'd10) begin
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd9; // buttons tens digit
+						OSD_wr_data <= 8'h30 + (buttons_decimal / 8'd10); // Tens digit
+					end else begin
+						// Skip writing tens digit for single digit numbers
+						OSD_wr_en <= 1'b0; // No write operation
+					end
+				end
+
+				WRITE_INPUTS_BUTTONS_UNITS: begin
+					jvs_name_copy_state <= WRITE_INPUTS_B;
+					//write units digit
+					OSD_wr_en <= 1'b1;
+					if (buttons_decimal >= 8'd10) begin
+						OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd10; // buttons units after tens digit
+					end else begin
+						OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd9;  // buttons units direct after 'P'
+					end
+					OSD_wr_data <= 8'h30 + (buttons_decimal % 8'd10); // Units digit
+				end
+
+				WRITE_INPUTS_B: begin
+					jvs_name_copy_state <= WRITE_ANALOG_INFO;
+					//write "b" after buttons digits (position depends on number of digits)
+					OSD_wr_en <= 1'b1;
+					if (buttons_decimal >= 8'd10) begin
+						OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd11; // 'b' after 2 digits (2P13b)
+					end else begin
+						OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd10; // 'b' after 1 digit (2P8b)
+					end
+					OSD_wr_data <= 8'h62; // 'b' (lowercase)
+				end
+
+				WRITE_ANALOG_INFO: begin
+					jvs_name_copy_state <= WRITE_ANALOG_CH;
+					//write number of analog channels to OSD memory
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_ANALOG_POS;
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_analog_channels[0][3:0]; // Convert to ASCII digit
+				end
+
+				WRITE_ANALOG_CH: begin
+					jvs_name_copy_state <= WRITE_ANALOG_H;
+					//write "C" for channels
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd1;
+					OSD_wr_data <= 8'h43; // 'C'
+				end
+
+				WRITE_ANALOG_H: begin
+					//write "h" for channels and calculate bits decimal value
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd2;
+					OSD_wr_data <= 8'h68; // 'h'
+					// Convert hex to decimal for display, check for unknown resolution
+					if (jvs_nodes.node_analog_bits[0] == 8'd0) begin
+						// Resolution unknown, skip to write '?' 
+						jvs_name_copy_state <= WRITE_ANALOG_B;
+						analog_bits_decimal <= 8'd0; // Special case for unknown
+					end else begin
+						jvs_name_copy_state <= WRITE_ANALOG_BITS_TENS;
+						analog_bits_decimal <= (jvs_nodes.node_analog_bits[0] > 8'd99) ? 8'd99 : jvs_nodes.node_analog_bits[0];
+					end
+				end
+
+				WRITE_ANALOG_BITS_TENS: begin
+					jvs_name_copy_state <= WRITE_ANALOG_BITS_UNITS;
+					//write tens digit of analog bits
+					if (analog_bits_decimal >= 8'd10) begin
+						OSD_wr_en <= 1'b1;
+						OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd3;
+						OSD_wr_data <= 8'h30 + (analog_bits_decimal / 8'd10); // Tens digit
+					end else begin
+						// Skip tens digit for single digit values
+						jvs_name_copy_state <= WRITE_ANALOG_BITS_UNITS;
+					end
+				end
+
+				WRITE_ANALOG_BITS_UNITS: begin
+					jvs_name_copy_state <= WRITE_ANALOG_B;
+					//write units digit of analog bits
+					OSD_wr_en <= 1'b1;
+					if (analog_bits_decimal >= 8'd10) begin
+						OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd4;
+					end else begin
+						OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd3; // Single digit, no space for tens
+					end
+					OSD_wr_data <= 8'h30 + (analog_bits_decimal % 8'd10); // Units digit
+				end
+
+				WRITE_ANALOG_B: begin
+					jvs_name_copy_state <= WRITE_COIN_INFO;
+					if (analog_bits_decimal == 8'd0) begin
+						// Unknown resolution, don't write anything more (just "8Ch")
+						OSD_wr_en <= 1'b0; // No write operation
+					end else begin
+						//write "b" for bits after the number
+						OSD_wr_en <= 1'b1;
+						if (analog_bits_decimal >= 8'd10) begin
+							OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd5; // After 2 digits
+						end else begin
+							OSD_wr_addr <= JVS_NODE_ANALOG_POS + 11'd4; // After 1 digit
+						end
+						OSD_wr_data <= 8'h62; // 'b'
+					end
+				end
+
+				WRITE_COIN_INFO: begin
+					jvs_name_copy_state <= WRITE_FEATURES_R;
+					//write number of coin slots after "COIN:" label on SWITCH line
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_PLAYERS_POS + 11'd18; // After "COIN:" label in compact format
+					OSD_wr_data <= 8'h30 + jvs_nodes.node_coin_slots[0][3:0]; // Convert to ASCII digit
+				end
+
+				WRITE_FEATURES_R: begin
+					jvs_name_copy_state <= WRITE_FEATURES_K;
+					//write 'R' if rotary encoders available (0x04), space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS;
+					OSD_wr_data <= (jvs_nodes.node_rotary_channels[0] > 0) ? 8'h52 : 8'h20; // 'R' or space
+				end
+
+				WRITE_FEATURES_K: begin
+					jvs_name_copy_state <= WRITE_FEATURES_S;
+					//write 'K' if keycode input available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd1;
+					OSD_wr_data <= jvs_nodes.node_has_keycode_input[0] ? 8'h4B : 8'h20; // 'K' or space
+				end
+
+				WRITE_FEATURES_S: begin
+					jvs_name_copy_state <= WRITE_FEATURES_D;
+					//write 'S' if screen position available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd2;
+					OSD_wr_data <= jvs_nodes.node_has_screen_pos[0] ? 8'h53 : 8'h20; // 'S' or space
+				end
+
+				WRITE_FEATURES_D: begin
+					jvs_name_copy_state <= WRITE_FEATURES_A;
+					//write 'D' if digital outputs available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd3;
+					OSD_wr_data <= (jvs_nodes.node_digital_outputs[0] > 0) ? 8'h44 : 8'h20; // 'D' or space
+				end
+
+				WRITE_FEATURES_A: begin
+					jvs_name_copy_state <= WRITE_FEATURES_C;
+					//write 'A' if analog outputs available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd4;
+					OSD_wr_data <= (jvs_nodes.node_analog_output_channels[0] > 0) ? 8'h41 : 8'h20; // 'A' or space
+				end
+
+				WRITE_FEATURES_C: begin
+					jvs_name_copy_state <= WRITE_FEATURES_M;
+					//write 'C' if card system available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd5;
+					OSD_wr_data <= (jvs_nodes.node_card_system_slots[0] > 0) ? 8'h43 : 8'h20; // 'C' or space
+				end
+
+				WRITE_FEATURES_M: begin
+					jvs_name_copy_state <= WRITE_FEATURES_T;
+					//write 'M' if medal hopper available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd6;
+					OSD_wr_data <= (jvs_nodes.node_medal_hopper_channels[0] > 0) ? 8'h4D : 8'h20; // 'M' or space
+				end
+
+				WRITE_FEATURES_T: begin
+					jvs_name_copy_state <= WRITE_FEATURES_B;
+					//write 'T' if text display available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd7;
+					OSD_wr_data <= jvs_nodes.node_has_char_display[0] ? 8'h54 : 8'h20; // 'T' or space
+				end
+
+				WRITE_FEATURES_B: begin
+					jvs_name_copy_state <= P1_BTN;
+					//write 'B' if backup available, space otherwise
+					OSD_wr_en <= 1'b1;
+					OSD_wr_addr <= JVS_NODE_FEATURES_POS + 11'd8;
+					OSD_wr_data <= jvs_nodes.node_has_backup[0] ? 8'h42 : 8'h20; // 'B' or space
 				end
 
 				P1_BTN: begin

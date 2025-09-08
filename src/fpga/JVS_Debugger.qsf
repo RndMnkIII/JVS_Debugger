@@ -39,7 +39,7 @@
 # JVS project settings  
 # ====================
 # Uncomment if you are not using a real JSV IO device to debug your application.
-set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1"
+#set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1"
 
 
 # Project-Wide Assignments

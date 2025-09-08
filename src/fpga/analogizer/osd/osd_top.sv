@@ -165,33 +165,34 @@ module osd_top #(
     endfunction
 
     logic hit_x, hit_y, gun_trigger_d;
-    logic gun_xr, gun_yr, x_pixr, y_pixr;
+    logic [11:0] gun_xr, gun_yr, x_pixr, y_pixr;   // <-- 12 bits
     localparam int GUN_CROSS_SIZE = 4;
 
     always_ff @(posedge clk) begin
-        hit_x <= is_around(x_pix, gun_x, GUN_CROSS_SIZE, 319);
-        hit_y <= is_around(y_pix, gun_y, GUN_CROSS_SIZE, 239);
-        gun_xr <= gun_x;
-        gun_yr <= gun_y;
-        x_pixr <= x_pix;
-        y_pixr <= y_pix;
-        gun_trigger_d <= gun_trigger;
+        if(pixel_ce) begin
+            hit_x <= is_around(x_pix, gun_x, GUN_CROSS_SIZE, 319);
+            hit_y <= is_around(y_pix, gun_y, GUN_CROSS_SIZE, 239);
+            gun_xr <= gun_x;
+            gun_yr <= gun_y;
+            x_pixr <= x_pix;
+            y_pixr <= y_pix;
+            gun_trigger_d <= gun_trigger;
 
 
-        //if((hit_x && !hit_y) || (!hit_x && hit_y)) begin //crosslines
-        //if(hit_x && hit_y) begin //box
-        if((hit_x && y_pixr == gun_yr) || (hit_y && x_pixr == gun_xr)) begin //crosshair
-            if(gun_trigger_d)
-                {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; //red
+            //if((hit_x && !hit_y) || (!hit_x && hit_y)) begin //crosslines
+            if((hit_x && y_pixr == gun_yr) || (hit_y && x_pixr == gun_xr)) begin //crosshair
+                if(gun_trigger_d)
+                    {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; //red
+                else
+                    {R_out, G_out, B_out} <= {8'h00, 8'hFF, 8'h00}; //green
+            end
             else
-                {R_out, G_out, B_out} <= {8'h00, 8'hFF, 8'h00}; //green
-        end
-        else
-            {R_out, G_out, B_out} <= (video_osd[24] == 1'b0) ? video_osd[23:0] : (osd_active ? {Rgrayout,Ggrayout,Bgrayout} :{R_d2, G_d2, B_d2});
+                {R_out, G_out, B_out} <= (video_osd[24] == 1'b0) ? video_osd[23:0] : (osd_active ? {Rgrayout,Ggrayout,Bgrayout} :{R_d2, G_d2, B_d2});
 
-        hsync_out  <= hsync_d2;
-        vsync_out  <= vsync_d2;
-        hblank_out <= hblank_d2;
-        vblank_out <= vblank_d2;
+            hsync_out  <= hsync_d2;
+            vsync_out  <= vsync_d2;
+            hblank_out <= hblank_d2;
+            vblank_out <= vblank_d2;
+        end
     end
 endmodule

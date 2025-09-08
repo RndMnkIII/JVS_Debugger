@@ -263,14 +263,17 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam RX_COPY_NAME = 3'h6;           // Copy node name from response data
     localparam RX_PARSE_FEATURES = 3'h7;      // Parse feature/capability data
     
-    // Additional RX states for input parsing (using 4-bit to expand beyond 3'h7)
-    localparam RX_PARSE_INPUTS_START = 4'h8;   // Initialize input response parsing
-    localparam RX_PARSE_INPUTS_SWITCH = 4'h9;  // Parse switch inputs data
-    localparam RX_PARSE_SWINP_PLAYER = 4'hE;   // Parse individual player SWINP data (recursive)
-    localparam RX_PARSE_INPUTS_COIN = 4'hA;    // Parse coin inputs data  
-    localparam RX_PARSE_INPUTS_ANALOG = 4'hB;  // Parse analog inputs data
-    localparam RX_PARSE_INPUTS_ROTARY = 4'hC;  // Parse rotary inputs data
-    localparam RX_PARSE_INPUTS_COMPLETE = 4'hD; // Complete parsing and return to idle
+    // Additional RX states for input parsing (using 5-bit to expand beyond 3'h7)
+    localparam RX_PARSE_INPUTS_START = 5'h8;   // Initialize input response parsing
+    localparam RX_PARSE_INPUTS_SWITCH = 5'h9;  // Parse switch inputs data
+    localparam RX_PARSE_SWINP_PLAYER = 5'hE;   // Parse individual player SWINP data (recursive)
+    localparam RX_PARSE_INPUTS_COIN = 5'hA;    // Parse coin inputs data  
+    localparam RX_PARSE_INPUTS_ANALOG = 5'hB;  // Parse analog inputs data
+    localparam RX_PARSE_INPUTS_ROTARY = 5'hC;  // Parse rotary inputs data
+    localparam RX_PARSE_INPUTS_KEYCODE = 5'hF;  // Parse keycode inputs data
+    localparam RX_PARSE_INPUTS_SCREEN_POS = 5'h10; // Parse screen position inputs data 
+    localparam RX_PARSE_INPUTS_MISC_DIGITAL = 5'h11; // Parse misc digital inputs data
+    localparam RX_PARSE_INPUTS_COMPLETE = 5'hD; // Complete parsing and return to idle
 
     //=========================================================================
     // STATE VARIABLES AND CONTROL REGISTERS
@@ -278,7 +281,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Current state for each state machine
     logic [4:0] main_state;        // Main protocol state
     logic [1:0] rs485_state;       // RS485 transceiver state
-    logic [3:0] rx_state;          // Receive frame processing state
+    logic [4:0] rx_state;          // Receive frame processing state (5-bit to support new parsing states)
     
     // Transmission buffer and control
     logic [7:0] tx_buffer [0:TX_BUFFER_SIZE-1];  // Buffer for outgoing JVS frames
@@ -1401,6 +1404,73 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // For now, we just advance past the rotary data without processing it
                     // TODO: Implement rotary encoder processing if needed
                     copy_read_idx <= copy_read_idx + (jvs_nodes.node_rotary_channels[current_device_addr - 1] * 2);
+                end
+                rx_state <= RX_PARSE_INPUTS_KEYCODE;
+            end
+            
+            // RX_PARSE_INPUTS_KEYCODE - Parse keycode inputs data
+            if (rx_state == RX_PARSE_INPUTS_KEYCODE) begin
+                // Check KEYINP report byte
+                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                    // KEYINP function failed, skip to next function
+                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                    rx_state <= RX_PARSE_INPUTS_SCREEN_POS;
+                end else begin
+                    // KEYINP report is normal, advance past report byte
+                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
+                    
+                    if (jvs_nodes.node_has_keycode_input[current_device_addr - 1]) begin
+                        // Parse keycode input data
+                        // Keycode input format: variable length depending on device
+                        // For now, we just advance past the keycode data without processing it
+                        // TODO: Implement keycode processing if needed
+                        // Assuming 1 byte for simplicity, adjust if needed based on device specs
+                        copy_read_idx <= copy_read_idx + 1;
+                    end
+                end
+                rx_state <= RX_PARSE_INPUTS_SCREEN_POS;
+            end
+            
+            // RX_PARSE_INPUTS_SCREEN_POS - Parse screen position inputs data
+            if (rx_state == RX_PARSE_INPUTS_SCREEN_POS) begin
+                // Check SCRPOSINP report byte
+                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                    // SCRPOSINP function failed, skip to next function
+                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                    rx_state <= RX_PARSE_INPUTS_MISC_DIGITAL;
+                end else begin
+                    // SCRPOSINP report is normal, advance past report byte
+                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
+                    
+                    if (jvs_nodes.node_has_screen_pos[current_device_addr - 1]) begin
+                        // Parse screen position data
+                        // Screen position format: Always 4 bytes = X_MSB, X_LSB, Y_MSB, Y_LSB (per JVS spec)
+                        // For now, we just advance past the screen position data without processing it
+                        // TODO: Implement screen position processing if needed
+                        copy_read_idx <= copy_read_idx + 4; // Fixed 4 bytes per JVS specification
+                    end
+                end
+                rx_state <= RX_PARSE_INPUTS_MISC_DIGITAL;
+            end
+            
+            // RX_PARSE_INPUTS_MISC_DIGITAL - Parse misc digital inputs data
+            if (rx_state == RX_PARSE_INPUTS_MISC_DIGITAL) begin
+                // Check MISCSWINP report byte
+                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                    // MISCSWINP function failed, skip to complete
+                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                    rx_state <= RX_PARSE_INPUTS_COMPLETE;
+                end else begin
+                    // MISCSWINP report is normal, advance past report byte
+                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
+                    
+                    if (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] > 0) begin
+                        // Parse misc digital input data
+                        // Calculate bytes needed for misc digital inputs (inline calculation)
+                        // For now, we just advance past the misc digital data without processing it
+                        // TODO: Implement misc digital input processing if needed
+                        copy_read_idx <= copy_read_idx + ((jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] + 7) / 8);
+                    end
                 end
                 rx_state <= RX_PARSE_INPUTS_COMPLETE;
             end

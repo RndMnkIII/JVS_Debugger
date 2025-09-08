@@ -202,6 +202,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam JVS_REPORT_POS = 8'd4;        // Position of report byte in response (should be processed)
     localparam JVS_CMD_START = 8'd3;         // Start position of command bytes (TX)
     localparam JVS_OVERHEAD = 8'd2;          // Overhead for length calculation (includes checksum + command byte)
+    localparam JVS_CHECKSUM_SIZE = 8'd1;     // Checksum is coded on one byte
 
     // Buffer size configuration for resource optimization
     localparam RX_BUFFER_SIZE = 128;         // Size of RX buffers (I/O Identify max 106 bytes)
@@ -229,12 +230,22 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam STATE_SEND_JVSREV = 4'h9;      // Send JVS revision request
     localparam STATE_SEND_COMMVER = 4'hA;     // Send communications version request
     localparam STATE_SEND_FEATCHK = 4'hB;     // Send feature check request
-    localparam STATE_SEND_INPUTS = 4'hC;      // Send input state request
+    localparam STATE_SEND_INPUTS = 4'hC;      // Send input state request (start progressive build)
     localparam STATE_WAIT_TX_SETUP = 4'hD;    // Wait for RS485 setup time
     localparam STATE_TRANSMIT_BYTE = 4'hE;    // Transmit data bytes
     localparam STATE_WAIT_TX_DONE = 4'hF;     // Wait for transmission completion
     localparam STATE_WAIT_TX_HOLD = 5'h10;    // Wait for RS485 hold time
     localparam STATE_WAIT_RX = 5'h11;         // Wait for device response
+    
+    // INPUT BUILDING SUB-STATES - Progressive frame construction
+    localparam STATE_SEND_INPUTS_SWITCH = 5'h12;   // Add switch inputs if available
+    localparam STATE_SEND_INPUTS_COIN = 5'h13;     // Add coin inputs if available  
+    localparam STATE_SEND_INPUTS_ANALOG = 5'h14;   // Add analog inputs if available
+    localparam STATE_SEND_INPUTS_ROTARY = 5'h15;   // Add rotary inputs if available
+    localparam STATE_SEND_INPUTS_KEYCODE = 5'h16;  // Add keycode inputs if available
+    localparam STATE_SEND_INPUTS_SCREEN = 5'h17;   // Add screen position inputs if available
+    localparam STATE_SEND_INPUTS_MISC = 5'h18;     // Add misc inputs if available
+    localparam STATE_SEND_INPUTS_FINALIZE = 5'h19; // Finalize frame and transmit
 
     // RS485 State Machine - Controls transceiver direction with proper timing
     localparam RS485_RECEIVE = 2'b00;         // Receive mode (default)
@@ -251,6 +262,15 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam RX_PROCESS = 3'h5;             // Processing complete and unescaped frame
     localparam RX_COPY_NAME = 3'h6;           // Copy node name from response data
     localparam RX_PARSE_FEATURES = 3'h7;      // Parse feature/capability data
+    
+    // Additional RX states for input parsing (using 4-bit to expand beyond 3'h7)
+    localparam RX_PARSE_INPUTS_START = 4'h8;   // Initialize input response parsing
+    localparam RX_PARSE_INPUTS_SWITCH = 4'h9;  // Parse switch inputs data
+    localparam RX_PARSE_SWINP_PLAYER = 4'hE;   // Parse individual player SWINP data (recursive)
+    localparam RX_PARSE_INPUTS_COIN = 4'hA;    // Parse coin inputs data  
+    localparam RX_PARSE_INPUTS_ANALOG = 4'hB;  // Parse analog inputs data
+    localparam RX_PARSE_INPUTS_ROTARY = 4'hC;  // Parse rotary inputs data
+    localparam RX_PARSE_INPUTS_COMPLETE = 4'hD; // Complete parsing and return to idle
 
     //=========================================================================
     // STATE VARIABLES AND CONTROL REGISTERS
@@ -258,7 +278,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Current state for each state machine
     logic [4:0] main_state;        // Main protocol state
     logic [1:0] rs485_state;       // RS485 transceiver state
-    logic [2:0] rx_state;          // Receive frame processing state
+    logic [3:0] rx_state;          // Receive frame processing state
     
     // Transmission buffer and control
     logic [7:0] tx_buffer [0:TX_BUFFER_SIZE-1];  // Buffer for outgoing JVS frames
@@ -276,6 +296,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Generic copy variables (used for unescape and name copying)
     logic [7:0] copy_read_idx;      // Read index for copy operations
     logic [7:0] copy_write_idx;     // Write index for copy operations
+    logic [7:0] request_build_idx;  // Index register for TX buffer construction
+    logic [3:0] current_player;     // Current player index for SWINP parsing (0, 1, 2...)
 
     // Timing and protocol control
     logic [31:0] delay_counter;    // Multi-purpose delay counter
@@ -624,36 +646,16 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                 // READ INPUTS COMMAND - Request current input states
                 //-------------------------------------------------------------
                 STATE_SEND_INPUTS: begin
-                    // Prepare READ INPUTS command frame
-                    // This complex command specifies exactly which inputs to read
-                    tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
-                    tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_READ_INPUTS;     // 20 - Read inputs command
+                    // Initialize INPUT PULLING frame progressive construction
+                    // Start with basic frame header
+                    tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0 - Sync byte
+                    tx_buffer[JVS_ADDR_POS] <= current_device_addr; // Device address (01)
                     
-                    // Input specification - tells device what data to return
-                    tx_buffer[JVS_CMD_START + 1] <= 8'h02;               // Number of players (2)
-                    tx_buffer[JVS_CMD_START + 2] <= 8'h02;               // Bytes per player (2)
-                    tx_buffer[JVS_CMD_START + 3] <= 8'h21;               // Player 1 system inputs
-                    tx_buffer[JVS_CMD_START + 4] <= 8'h01;               // Player 1 button inputs
-                    tx_buffer[JVS_CMD_START + 5] <= 8'h22;               // Player 2 system inputs
-                    tx_buffer[JVS_CMD_START + 6] <= 8'h06;               // Player 2 button inputs
+                    // Use JVS_LENGTH_POS as data byte counter (starts at 0)
+                    tx_buffer[JVS_LENGTH_POS] <= 8'd0;  // Start counting data bytes from 0
                     
-                    // Analog channel specifications
-                    tx_buffer[JVS_CMD_START + 7] <= 8'h32;              // Analog channel 1 request
-                    tx_buffer[JVS_CMD_START + 8] <= 8'h02;              // 2 bytes of analog data
-                    tx_buffer[JVS_CMD_START + 9] <= 8'h00;              // Analog 1 data MSB
-                    tx_buffer[JVS_CMD_START + 10] <= 8'h00;              // Analog 1 data LSB
-                    tx_buffer[JVS_CMD_START + 11] <= 8'h33;              // Analog channel 2 request
-                    tx_buffer[JVS_CMD_START + 12] <= 8'h02;              // 2 bytes of analog data
-                    tx_buffer[JVS_CMD_START + 13] <= 8'h00;              // Analog 2 data MSB
-                    tx_buffer[JVS_CMD_START + 14] <= 8'h00;              // Analog 2 data LSB
-                    tx_buffer[JVS_CMD_START + 15] <= 8'h00;              // Padding byte
-                    tx_buffer[JVS_CMD_START + 16] <= 8'h00;              // Padding byte
-                    tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 16;               // 16 data bytes + overhead
-                    
-                    rs485_tx_request <= 1'b1;
-                    last_tx_state <= STATE_SEND_INPUTS;
-                    main_state <= STATE_WAIT_TX_SETUP;
+                    // Begin progressive state machine - start with switch inputs
+                    main_state <= STATE_SEND_INPUTS_SWITCH;
                 end
 
                 //-------------------------------------------------------------
@@ -747,7 +749,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                                 jvs_data_ready_init <= 1'b1;               // Indicate initialization complete
                                 main_state <= STATE_IDLE;           // Features checked, start polling
                             end
-                            CMD_READ_INPUTS: main_state <= STATE_IDLE;       // Inputs read, continue polling
+                            CMD_READ_INPUTS: main_state <= STATE_IDLE;
                             default: main_state <= STATE_IDLE;
                         endcase
                     //end else if (timeout_counter < 32'h0C3500) begin  // 10ms timeout - fast for responsive gaming
@@ -766,6 +768,118 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         endcase
                     end
                 end
+
+                //-------------------------------------------------------------
+                // INPUT BUILDING PROGRESSIVE STATES
+                //-------------------------------------------------------------
+                
+                STATE_SEND_INPUTS_SWITCH: begin
+                    if (jvs_nodes.node_players[current_device_addr - 1] > 0) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add SWINP command and parameters using blocking assignments for index calculations
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_READ_INPUTS; // 20 - SWINP command
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_players[current_device_addr - 1];  // Number of players
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= (jvs_nodes.node_buttons[current_device_addr - 1] + 7) / 8; // Compute number of bytes to include all per player bits
+                        request_build_idx = request_build_idx + 1;
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_INPUTS_COIN;
+                end
+                
+                STATE_SEND_INPUTS_COIN: begin
+                    if (jvs_nodes.node_coin_slots[current_device_addr - 1] > 0) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add coin input command using blocking assignments for index calculations
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h21;  // COININP command
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_coin_slots[current_device_addr - 1]; // Number of coin slots
+                        request_build_idx = request_build_idx + 1;
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_INPUTS_ANALOG;
+                end
+                
+                STATE_SEND_INPUTS_ANALOG: begin
+                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] > 0) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add analog input command using blocking assignments for index calculations
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h22;  // ANLINP command
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_analog_channels[current_device_addr - 1]; // Number of analog channels
+                        request_build_idx = request_build_idx + 1;
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_INPUTS_ROTARY;
+                end
+                
+                STATE_SEND_INPUTS_ROTARY: begin
+                    if (jvs_nodes.node_rotary_channels[current_device_addr - 1] > 0) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add rotary input command using blocking assignments for index calculations
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h23;  // ROTINP command
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_rotary_channels[current_device_addr - 1]; // Number of rotary channels
+                        request_build_idx = request_build_idx + 1;
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx + 1;
+                    end
+                    main_state <= STATE_SEND_INPUTS_KEYCODE;
+                end
+                
+                STATE_SEND_INPUTS_KEYCODE: begin
+                    if (jvs_nodes.node_has_keycode_input[current_device_addr - 1]) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add keycode input command (no parameters) using blocking assignments for index calculations
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h24;  // KEYINP command
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_INPUTS_SCREEN;
+                end
+                
+                STATE_SEND_INPUTS_SCREEN: begin
+                    if (jvs_nodes.node_has_screen_pos[current_device_addr - 1]) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add screen position input command using blocking assignments for index calculations
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h25;  // SCRPOSINP command
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h01;  // Channel index
+                        request_build_idx = request_build_idx + 1;
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_INPUTS_MISC;
+                end
+                
+                STATE_SEND_INPUTS_MISC: begin
+                    if (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] > 0) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        // Add misc switch input command using blocking assignments for index calculations
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h26;  // MISCSWINP command
+                        request_build_idx = request_build_idx + 1;
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] + 7) / 8; // Bytes needed
+                        request_build_idx = request_build_idx + 1;
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_INPUTS_FINALIZE;
+                end
+                
+                STATE_SEND_INPUTS_FINALIZE: begin
+                    // Add checksum size byte count to get total frame length
+                    tx_buffer[JVS_LENGTH_POS] <= tx_buffer[JVS_LENGTH_POS] + JVS_CHECKSUM_SIZE;
+                    // Start transmission
+                    rs485_tx_request <= 1'b1;
+                    last_tx_state <= STATE_SEND_INPUTS;
+                    main_state <= STATE_WAIT_TX_SETUP;
+                end
+
 
                 default: main_state <= STATE_IDLE;
             endcase
@@ -1098,6 +1212,207 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     rx_state <= RX_IDLE;
                 end
             end
+            
+            //-------------------------------------------------------------
+            // RX INPUT PARSING STATES - Parse input response data
+            //-------------------------------------------------------------
+            
+            // RX_PARSE_INPUTS_START - Initialize input response parsing
+            if (rx_state == RX_PARSE_INPUTS_START) begin
+                // Verify the response status byte (01 = success) 
+                if (rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL) begin
+                    // Status is valid, start parsing from first report byte position
+                    copy_read_idx <= JVS_STATUS_POS + 1;  // Skip status byte, point to first report byte
+                    rx_state <= RX_PARSE_INPUTS_SWITCH;
+                end else begin
+                    // Invalid status, return to idle
+                    rx_frame_complete <= 1'b1;
+                    rx_counter <= 8'h00;
+                    rx_state <= RX_IDLE;
+                end
+            end
+            
+            // RX_PARSE_INPUTS_SWITCH - Parse switch inputs report and system byte
+            if (rx_state == RX_PARSE_INPUTS_SWITCH) begin
+                // Check SWINP report byte
+                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                    // SWINP function failed, skip to next function
+                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                    rx_state <= RX_PARSE_INPUTS_COIN;
+                end else begin
+                    // SWINP report is normal, advance past report byte and system byte
+                    copy_read_idx <= copy_read_idx + 2; // Skip report byte + system byte, now points to first player data
+                    
+                    if (jvs_nodes.node_players[current_device_addr - 1] > 0) begin
+                        // Initialize player parsing
+                        current_player <= 4'd0; // Start with player 0
+                        rx_state <= RX_PARSE_SWINP_PLAYER; // Go to player parsing state
+                    end else begin
+                        // No players, clear all states and skip to next function
+                        p1_btn_state <= 16'h0000;
+                        p2_btn_state <= 16'h0000;
+                        rx_state <= RX_PARSE_INPUTS_COIN;
+                    end
+                end
+            end
+            
+            // RX_PARSE_SWINP_PLAYER - Parse individual player SWINP data (recursive)
+            if (rx_state == RX_PARSE_SWINP_PLAYER) begin
+                // Parse current player data
+                case (current_player)
+                    4'd0: begin // Player 1
+                        // First player data byte
+                        p1_btn_state[15] <= rx_buffer[copy_read_idx][7];  // START  
+                        p1_btn_state[14] <= rx_buffer[copy_read_idx][6];  // SELECT/SERVICE
+                        p1_btn_state[0]  <= rx_buffer[copy_read_idx][5];  // UP
+                        p1_btn_state[1]  <= rx_buffer[copy_read_idx][4];  // DOWN  
+                        p1_btn_state[2]  <= rx_buffer[copy_read_idx][3];  // LEFT
+                        p1_btn_state[3]  <= rx_buffer[copy_read_idx][2];  // RIGHT
+                        p1_btn_state[4]  <= rx_buffer[copy_read_idx][1];  // A (push1)
+                        p1_btn_state[5]  <= rx_buffer[copy_read_idx][0];  // B (push2)
+                        
+                        // Second player data byte if available (additional buttons)
+                        if (jvs_nodes.node_buttons[current_device_addr - 1] > 8) begin
+                            p1_btn_state[6] <= rx_buffer[copy_read_idx + 1][7];  // X (push3)
+                            p1_btn_state[7] <= rx_buffer[copy_read_idx + 1][6];  // Y (push4)
+                            p1_btn_state[8] <= rx_buffer[copy_read_idx + 1][5];   // push5 -> L1
+                            p1_btn_state[9] <= rx_buffer[copy_read_idx + 1][4];   // push6 -> R1
+                            p1_btn_state[10] <= rx_buffer[copy_read_idx + 1][3];  // push7 -> L2  
+                            p1_btn_state[11] <= rx_buffer[copy_read_idx + 1][2];  // push8 -> R2
+                            p1_btn_state[12] <= rx_buffer[copy_read_idx + 1][1];  // push9 -> L3
+                            p1_btn_state[13] <= rx_buffer[copy_read_idx + 1][0];  // push10 -> R3
+                        end else begin
+                            p1_btn_state[13:6] <= 8'b00000000;
+                        end
+                    end
+                    
+                    4'd1: begin // Player 2
+                        p2_btn_state[15] <= rx_buffer[copy_read_idx][7];  // P2 START  
+                        p2_btn_state[14] <= rx_buffer[copy_read_idx][6];  // P2 SELECT
+                        p2_btn_state[0]  <= rx_buffer[copy_read_idx][5];  // P2 UP
+                        p2_btn_state[1]  <= rx_buffer[copy_read_idx][4];  // P2 DOWN  
+                        p2_btn_state[2]  <= rx_buffer[copy_read_idx][3];  // P2 LEFT
+                        p2_btn_state[3]  <= rx_buffer[copy_read_idx][2];  // P2 RIGHT
+                        p2_btn_state[4]  <= rx_buffer[copy_read_idx][1];  // P2 A
+                        p2_btn_state[5]  <= rx_buffer[copy_read_idx][0];  // P2 B
+                        
+                        if (jvs_nodes.node_buttons[current_device_addr - 1] > 8) begin
+                            p2_btn_state[6] <= rx_buffer[copy_read_idx + 1][6];  // P2 X
+                            p2_btn_state[7] <= rx_buffer[copy_read_idx + 1][5];  // P2 Y
+                            p2_btn_state[8] <= rx_buffer[copy_read_idx + 1][4];  // P2 L1
+                            p2_btn_state[9] <= rx_buffer[copy_read_idx + 1][3];  // P2 R1
+                            p2_btn_state[10] <= rx_buffer[copy_read_idx + 1][2]; // P2 L2
+                            p2_btn_state[11] <= rx_buffer[copy_read_idx + 1][1]; // P2 R2
+                        end else begin
+                            p2_btn_state[11:6] <= 6'b000000;
+                        end
+                        p2_btn_state[13:12] <= 2'b00;
+                    end
+                    
+                    default: begin
+                        // Player 3+ not supported, clear states  
+                    end
+                endcase
+                
+                // Advance to next player
+                copy_read_idx <= copy_read_idx + ((jvs_nodes.node_buttons[current_device_addr - 1] + 7) / 8);
+                current_player <= current_player + 1;
+                
+                // Check if done with all players
+                if (current_player + 1 >= jvs_nodes.node_players[current_device_addr - 1]) begin
+                    rx_state <= RX_PARSE_INPUTS_COIN; // All players processed, go to next function
+                end
+                // else stay in RX_PARSE_SWINP_PLAYER for next player
+            end
+            
+            // RX_PARSE_INPUTS_COIN - Parse coin inputs data  
+            if (rx_state == RX_PARSE_INPUTS_COIN) begin
+                // Check COININP report byte
+                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                    // COININP function failed, skip to next function
+                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                    rx_state <= RX_PARSE_INPUTS_ANALOG;
+                end else begin
+                    // COININP report is normal, advance past report byte
+                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
+                    
+                    if (jvs_nodes.node_coin_slots[current_device_addr - 1] > 0) begin
+                        // Parse coin counter data (2 bytes per coin slot)
+                        // Each coin slot has MSB and LSB for coin count
+                        
+                        // For now, we just advance past the coin data without processing it
+                        // TODO: Implement coin counter processing if needed
+                        copy_read_idx <= copy_read_idx + (jvs_nodes.node_coin_slots[current_device_addr - 1] * 2);
+                    end
+                end
+                rx_state <= RX_PARSE_INPUTS_ANALOG;
+            end
+            
+            // RX_PARSE_INPUTS_ANALOG - Parse analog inputs data
+            if (rx_state == RX_PARSE_INPUTS_ANALOG) begin
+                // Check ANLINP report byte
+                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                    // ANLINP function failed, skip to next function
+                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                    rx_state <= RX_PARSE_INPUTS_ROTARY;
+                end else begin
+                    // ANLINP report is normal, advance past report byte
+                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
+                    
+                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] > 0) begin
+                    // Parse analog input data (2 bytes per channel in 16-bit format)
+                    
+                    // Parse analog data and update joystick states
+                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 1) begin
+                        // First analog channel -> P1 X axis
+                        p1_joy_state[31:24] <= rx_buffer[copy_read_idx];     // MSB
+                        p1_joy_state[23:16] <= rx_buffer[copy_read_idx + 1]; // LSB
+                    end
+                    
+                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 2) begin
+                        // Second analog channel -> P1 Y axis
+                        p1_joy_state[15:8] <= rx_buffer[copy_read_idx + 2];
+                        p1_joy_state[7:0] <= rx_buffer[copy_read_idx + 3];
+                    end
+                    
+                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 3) begin
+                        // Third analog channel -> P2 X axis
+                        p2_joy_state[31:24] <= rx_buffer[copy_read_idx + 4];
+                        p2_joy_state[23:16] <= rx_buffer[copy_read_idx + 5];
+                    end
+                    
+                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 4) begin
+                        // Fourth analog channel -> P2 Y axis
+                        p2_joy_state[15:8] <= rx_buffer[copy_read_idx + 6];
+                        p2_joy_state[7:0] <= rx_buffer[copy_read_idx + 7];
+                    end
+                    
+                        // Advance read index past all analog data (2 bytes per channel)
+                        copy_read_idx <= copy_read_idx + (jvs_nodes.node_analog_channels[current_device_addr - 1] * 2);
+                    end
+                end
+                rx_state <= RX_PARSE_INPUTS_ROTARY;
+            end
+            
+            // RX_PARSE_INPUTS_ROTARY - Parse rotary inputs data
+            if (rx_state == RX_PARSE_INPUTS_ROTARY) begin
+                if (jvs_nodes.node_rotary_channels[current_device_addr - 1] > 0) begin
+                    // Parse rotary encoder data (2 bytes per channel)
+                    // For now, we just advance past the rotary data without processing it
+                    // TODO: Implement rotary encoder processing if needed
+                    copy_read_idx <= copy_read_idx + (jvs_nodes.node_rotary_channels[current_device_addr - 1] * 2);
+                end
+                rx_state <= RX_PARSE_INPUTS_COMPLETE;
+            end
+            
+            // RX_PARSE_INPUTS_COMPLETE - Complete parsing and return to idle
+            if (rx_state == RX_PARSE_INPUTS_COMPLETE) begin
+                // Input processing complete, signal completion
+                jvs_data_ready_joy <= 1'b1; // Indicate new input data available
+                rx_frame_complete <= 1'b1;
+                rx_counter <= 8'h00;
+                rx_state <= RX_IDLE;
+            end
 
             //-------------------------------------------------------------
             // RX_PROCESS - Process complete valid frames
@@ -1204,121 +1519,24 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     
                     STATE_SEND_INPUTS: begin
-                        // Process input data response
-                        // Validate response format: E0 00 XX 01 (sync, master addr, length, normal status)
+                        // Process input data response  
                         if (rx_buffer[JVS_ADDR_POS] == JVS_HOST_ADDR && rx_buffer[JVS_STATUS_POS] == STATUS_NORMAL) begin
-                            // Ensure minimum frame size for button data
-                            if (rx_buffer[JVS_LENGTH_POS] >= 8) begin
-                            
-                            //=================================================
-                            // PLAYER 1 BUTTON MAPPING
-                            //=================================================
-                            // Map JVS button data to Analogue Pocket format
-                            // JVS Frame format for inputs:
-                            // rx_buffer[6] = P1 buttons (A,B,X,Y,L1,R1,SELECT + unused bit)
-                            // rx_buffer[7] = P1 directions (UP,DOWN,LEFT,RIGHT + unused + unused + unused + START)
-                            //
-                            // Analogue Pocket button format (p1_btn_state[15:0]):
-                            // [15] START, [14] SELECT, [13] R3, [12] L3, [11] R2, [10] L2
-                            // [9] R1, [8] L1, [7] Y, [6] X, [5] B, [4] A
-                            // [3] RIGHT, [2] LEFT, [1] DOWN, [0] UP
-                            
-                            // D-PAD mapping (directional pad)
-                            p1_btn_state[0] <= rx_buffer[6][5];   // UP - Map from JVS bit 5
-                            p1_btn_state[1] <= rx_buffer[6][4];   // DOWN - Map from JVS bit 4  
-                            p1_btn_state[2] <= rx_buffer[6][3];   // LEFT - Map from JVS bit 3
-                            p1_btn_state[3] <= rx_buffer[6][2];   // RIGHT - Map from JVS bit 2
-                            
-                            // Face buttons mapping (main action buttons)
-                            p1_btn_state[4] <= rx_buffer[6][1];   // A - Map from JVS button bit 1
-                            p1_btn_state[5] <= rx_buffer[6][0];   // B - Map from JVS button bit 0
-                            p1_btn_state[6] <= rx_buffer[7][6];   // X - Map from JVS directions bit 6
-                            p1_btn_state[7] <= rx_buffer[7][5];   // Y - Map from JVS directions bit 5
-                            
-                            // Trigger buttons (shoulder buttons) - not used in basic JVS
-                            p1_btn_state[8] <= 1'b0;              // L1 - Not available in this JVS config
-                            p1_btn_state[9] <= 1'b0;              // R1 - Not available in this JVS config
-                            p1_btn_state[10] <= 1'b0;             // L2 - Not available in this JVS config
-                            p1_btn_state[11] <= 1'b0;             // R2 - Not available in this JVS config
-                            p1_btn_state[12] <= 1'b0;             // L3 - Not available in this JVS config
-                            p1_btn_state[13] <= 1'b0;             // R3 - Not available in this JVS config
-                            
-                            // System buttons mapping
-                            p1_btn_state[14] <= rx_buffer[6][6];  // SELECT - Map from JVS button bit 6
-                            p1_btn_state[15] <= rx_buffer[6][7];  // START - Map from JVS button bit 7
-
-                            //=================================================
-                            // PLAYER 2 BUTTON MAPPING (if present in frame)
-                            //=================================================
-                            if (rx_buffer[JVS_LENGTH_POS] >= 10) begin  // Check if frame contains P2 data
-                                // JVS P2 data typically at positions 8 and 9
-                                // rx_buffer[8] = P2 buttons, rx_buffer[9] = P2 directions
-                                
-                                // P2 D-PAD mapping
-                                p2_btn_state[0] <= rx_buffer[8][5];   // P2 UP
-                                p2_btn_state[1] <= rx_buffer[8][4];   // P2 DOWN
-                                p2_btn_state[2] <= rx_buffer[8][3];   // P2 LEFT
-                                p2_btn_state[3] <= rx_buffer[8][2];   // P2 RIGHT
-                                
-                                // P2 Face buttons mapping
-                                p2_btn_state[4] <= rx_buffer[8][1];   // P2 A
-                                p2_btn_state[5] <= rx_buffer[8][0];   // P2 B
-                                p2_btn_state[6] <= rx_buffer[9][6];   // P2 X
-                                p2_btn_state[7] <= rx_buffer[9][5];   // P2 Y
-                                
-                                // P2 Trigger buttons (not used)
-                                p2_btn_state[8] <= 1'b0;              // P2 L1
-                                p2_btn_state[9] <= 1'b0;              // P2 R1
-                                p2_btn_state[10] <= 1'b0;             // P2 L2
-                                p2_btn_state[11] <= 1'b0;             // P2 R2
-                                p2_btn_state[12] <= 1'b0;             // P2 L3
-                                p2_btn_state[13] <= 1'b0;             // P2 R3
-                                
-                                // P2 System buttons mapping
-                                p2_btn_state[14] <= rx_buffer[8][6];  // P2 SELECT
-                                p2_btn_state[15] <= rx_buffer[8][7];  // P2 START
+                            if (rx_buffer[JVS_REPORT_POS] == REPORT_NORMAL) begin
+                                // Start progressive input parsing in RX state machine
+                                copy_read_idx <= JVS_STATUS_POS + 1;  // Skip status byte
+                                rx_state <= RX_PARSE_INPUTS_START;    // Switch to input parsing state
                             end else begin
-                                // No P2 data in frame, clear P2 button state
-                                p2_btn_state <= 16'h0000;
+                                // Input read failed, signal completion
+                                rx_frame_complete <= 1'b1;
+                                rx_counter <= 8'h00;
+                                rx_state <= RX_IDLE;
                             end
-                            
-                            //=================================================
-                            // ANALOG STICK DATA MAPPING (if present in frame)
-                            //=================================================
-                            if (rx_buffer[JVS_LENGTH_POS] >= 14) begin  // Check if frame contains analog data
-                                // JVS analog data format: 8-bit values where 0x80 = center position
-                                // Analogue Pocket expects same format: 0x80 = center
-                                
-                                // Player 1 analog stick data (typically at positions 10-13)
-                                p1_joy_state[7:0] <= rx_buffer[10];    // Left stick X axis
-                                p1_joy_state[15:8] <= rx_buffer[11];   // Left stick Y axis  
-                                p1_joy_state[23:16] <= rx_buffer[12];  // Right stick X axis (if available)
-                                p1_joy_state[31:24] <= rx_buffer[13];  // Right stick Y axis (if available)
-                            end else begin
-                                // No analog data, set sticks to center position
-                                p1_joy_state <= 32'h80808080;  // All axes centered
-                            end
-                            
-                            //=================================================
-                            // PLAYER 2 ANALOG DATA (if present in frame)
-                            //=================================================
-                            if (rx_buffer[JVS_LENGTH_POS] >= 18) begin  // Check if frame contains P2 analog data
-                                // Player 2 analog stick data (typically at positions 14-17)
-                                p2_joy_state[7:0] <= rx_buffer[14];    // P2 Left stick X
-                                p2_joy_state[15:8] <= rx_buffer[15];   // P2 Left stick Y
-                                p2_joy_state[23:16] <= rx_buffer[16];  // P2 Right stick X
-                                p2_joy_state[31:24] <= rx_buffer[17];  // P2 Right stick Y
-                            end else begin
-                                // No P2 analog data, set sticks to center position
-                                p2_joy_state <= 32'h80808080;
-                            end
+                        end else begin
+                            // Invalid response, signal completion anyway
+                            rx_frame_complete <= 1'b1;
+                            rx_counter <= 8'h00;
+                            rx_state <= RX_IDLE;
                         end
-                        // Input processing complete, signal completion
-                        jvs_data_ready_joy <= 1'b1; // Indicate new input data available
-                        rx_frame_complete <= 1'b1;
-                        rx_counter <= 8'h00;
-                        rx_state <= RX_IDLE;
-                    end
                     end
                     
                     default: begin
@@ -1531,7 +1749,7 @@ COMPLETE COMMUNICATION SEQUENCE:
     - 20: Read inputs command
     - 02: Number of players (2)
     - 02: Bytes per player (2 bytes each)
-    - 21: Player 1 system/direction byte request
+    - 21: Coin input command
     - 01: Player 1 button byte request
     - 22: Player 2 system/direction byte request
     - 06: Player 2 button byte request

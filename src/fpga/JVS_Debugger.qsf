@@ -39,7 +39,7 @@
 # JVS project settings  
 # ====================
 # Uncomment if you are not using a real JSV IO device to debug your application.
-#set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1"
+set_global_assignment -name VERILOG_MACRO "USE_DUMMY_JVS_DATA=1"
 
 
 # Project-Wide Assignments
@@ -822,6 +822,7 @@ set_global_assignment -name SEED 0
 set_global_assignment -name EDA_SIMULATION_TOOL "Questa Intel FPGA (SystemVerilog)"
 set_global_assignment -name EDA_OUTPUT_DATA_FORMAT "SYSTEMVERILOG HDL" -section_id eda_simulation
 set_global_assignment -name EDA_TIME_SCALE "1 ps" -section_id eda_simulation
+set_global_assignment -name VERILOG_FILE analogizer/vga_out_fixed.v
 set_global_assignment -name SYSTEMVERILOG_FILE analogizer/ROM_snac_strings.sv
 set_global_assignment -name SYSTEMVERILOG_FILE analogizer/jvs_node_info_pkg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/JVS_pkg.sv

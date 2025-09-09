@@ -267,6 +267,11 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 	jvs_node_info_t jvs_nodes;
     logic [7:0] node_name_rd_data;
     logic [6:0] node_name_rd_addr;
+    
+	// generic snac gun support
+    wire snac_gun_trigger;
+    wire [11:0] snac_gun_x;
+    wire [11:0] snac_gun_y;
 
 	openFPGA_Pocket_Analogizer_SNAC #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) snac
 	(
@@ -301,7 +306,11 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		.jvs_data_ready(jvs_data_ready),
         .jvs_nodes(jvs_nodes),
         .node_name_rd_data(node_name_rd_data),
-        .node_name_rd_addr(node_name_rd_addr)
+        .node_name_rd_addr(node_name_rd_addr),
+        // generic snac gun support
+        .snac_gun_trigger(snac_gun_trigger),
+        .snac_gun_x(snac_gun_x),
+        .snac_gun_y(snac_gun_y)
 	); 
 
 	//=========================================================================
@@ -908,10 +917,10 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		.wr_en(OSD_wr_en),
 		.wr_addr(OSD_wr_addr),
 		.wr_data(OSD_wr_data),
-		//JVS Light crosshair
-		.gun_trigger(1'b0),
-    	.gun_x(12'd159),
-    	.gun_y(12'd119)
+		// Wire gun to snac module
+		.gun_trigger(snac_gun_trigger),
+    	.gun_x(snac_gun_x),
+    	.gun_y(snac_gun_y)
    );
 
    assign OSD_out_R =OSD_R;

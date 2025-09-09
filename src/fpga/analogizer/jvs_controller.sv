@@ -63,6 +63,11 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     output logic [31:0] p2_joy_state,   // Player 2 analog stick states
     output logic [15:0] p3_btn_state,   // Player 3 button states (reserved)
     output logic [15:0] p4_btn_state,    // Player 4 button states (reserved)
+    
+    // Screen position outputs (light gun/touch screen) - raw 16-bit data
+    output logic [15:0] screen_pos_x,   // Screen X position (16-bit from JVS)
+    output logic [15:0] screen_pos_y,   // Screen Y position (16-bit from JVS)
+    output logic has_screen_pos,        // Device supports screen position inputs
 
     //JVS node information structure
     output logic jvs_data_ready,
@@ -137,52 +142,181 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam logic [31:0] POLL_INTERVAL_COUNT = MASTER_CLK_FREQ / 1_000; // 1ms
 
 
-    // Standard JVS protocol bytes as defined in JAMMA specification
+    //=========================================================================
+    // JVS COMMAND DEFINITIONS (Based on JVS Specification)
+    //=========================================================================
+    
+    // Standard JVS protocol bytes
     localparam JVS_SYNC_BYTE = 8'hE0;        // Frame start synchronization byte
     localparam JVS_BROADCAST_ADDR = 8'hFF;   // Broadcast address for all devices
     localparam JVS_HOST_ADDR = 8'h00;        // Host/Master address
-    localparam CMD_RESET_B1 = 8'hF0;         // Reset command byte 1
-    localparam CMD_RESET_B2 = 8'hD9;         // Reset command byte 2 (must follow B1)
-    localparam CMD_SETADDR = 8'hF1;          // Set device address command
-    localparam CMD_READID = 8'h10;           // Read device identification command
-    localparam CMD_CMDREV = 8'h11;           // Command format revision command
-    localparam CMD_JVSREV = 8'h12;           // JVS revision command  
-    localparam CMD_COMMVER = 8'h13;          // Communications version command
-    localparam CMD_FEATCHK = 8'h14;          // Feature check command
-    localparam CMD_READ_INPUTS = 8'h20;      // Read input states command
     
-    // JVS Status codes (Table 6)
-    localparam STATUS_NORMAL = 8'h01;        // Normal
-    localparam STATUS_UNKNOWN_CMD = 8'h02;   // Unknown command (Unsupported command)
-    localparam STATUS_CHECKSUM_ERROR = 8'h03; // Checksum error
-    localparam STATUS_ACK_OVERFLOW = 8'h04;  // Acknowledge overflow (Acknowledge data is too large)
+    // Global Commands - Work with any device address or broadcast (0xFF)
+    localparam CMD_RESET = 8'hF0;            // [F0 D9] Reset all devices on bus
+                                             // Args: D9 (fixed argument)
+                                             // Response: No response (devices reset)
+    localparam CMD_RESET_ARG = 8'hD9;        // Argument byte that must follow CMD_RESET
     
-    // JVS Report codes (Table 7)
-    localparam REPORT_NORMAL = 8'h01;        // Normal
-    localparam REPORT_PARAM_ERROR_COUNT = 8'h02; // Parameter error (incorrect number of parameters)
+    localparam CMD_SETADDR = 8'hF1;          // [F1 addr] Assign address to device
+                                             // Args: addr (1-31, device address)
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_COMMCHG = 8'hF2;          // [F2 baudrate] Change communication speed
+                                             // Args: baudrate (communication speed code)
+                                             // Response: [report] - report=01 if success
+    
+    // Initialize Commands - Device identification and capability discovery
+    localparam CMD_IOIDENT = 8'h10;          // [10] Read device identification string
+                                             // Args: none
+                                             // Response: [report name_string 00]
+                                             //   name_string: ASCII device name (manufacturer;product;version;region,comment)
+    
+    localparam CMD_CMDREV = 8'h11;           // [11] Read command format revision
+                                             // Args: none  
+                                             // Response: [report revision]
+                                             //   revision: BCD format (e.g. 0x13 for v1.3)
+    
+    localparam CMD_JVSREV = 8'h12;           // [12] Read JVS specification revision
+                                             // Args: none
+                                             // Response: [report revision]
+                                             //   revision: BCD format (e.g. 0x30 for v3.0)
+    
+    localparam CMD_COMMVER = 8'h13;          // [13] Read communication version
+                                             // Args: none
+                                             // Response: [report version]
+                                             //   version: BCD format (e.g. 0x10 for v1.0)
+    
+    localparam CMD_FEATCHK = 8'h14;          // [14] Check device features/capabilities
+                                             // Args: none
+                                             // Response: [report func_data... 00]
+                                             //   func_data: loop of 4-byte blocks [func_code param1 param2 param3] loop end with 00
+    
+    localparam CMD_MAINID = 8'h15;           // [15] Send main board ID to I/O device
+                                             // Args: [main_pcb_id_string 00] - ASCII string up to 100 chars
+                                             //   Format: "Maker;Game;Version;Details" separated by semicolons
+                                             //   Example: "NAMCO LTD.;TEKKEN2;ver1.6; TEKKEN2 ver B"
+                                             // Response: [report] - report=01 if success
+    
+    // Data I/O Commands - Input reading and data retrieval
+    localparam CMD_SWINP = 8'h20;            // [20 players bytes] Read switch inputs (digital buttons)
+                                             // Args: players (number of players), bytes (total bytes needed for bits per player)
+                                             // Response: [report switch_data...]
+                                             //   switch_data: players × bytes of digital input data
+    
+    localparam CMD_COININP = 8'h21;          // [21 slots] Read coin inputs and counter
+                                             // Args: slots (number of coin slots to read)
+                                             // Response: [report coin_status...]
+                                             //   coin_status: loop of 2 bytes [condition(2 bits) counter_MSB(6 bits) counter_LSB]
+    
+    // Coin Input Condition Codes (Table 12)
+    localparam COIN_CONDITION_NORMAL = 2'b00;        // Normal operation
+    localparam COIN_CONDITION_JAM = 2'b01;           // Coin jam detected
+    localparam COIN_CONDITION_DISCONNECTED = 2'b10;  // Coin mechanism disconnected  
+    localparam COIN_CONDITION_BUSY = 2'b11;          // Coin mechanism busy
+
+    localparam CMD_ANLINP = 8'h22;           // [22 channels] Read analog inputs
+                                             // Args: channels (number of analog channels)
+                                             // Response: [report analog_data...]
+                                             //   analog_data: 2 bytes per channel [data_MSB data_LSB]
+    
+    localparam CMD_ROTINP = 8'h23;           // [23 channels] Read rotary inputs
+                                             // Args: channels (number of rotary channels to read)
+                                             // Response: [report rotary_data...]
+                                             //   rotary_data: 2 bytes per channel [data_MSB data_LSB]
+    
+    localparam CMD_KEYINP = 8'h24;           // [24] Read keycode inputs
+                                             // Args: none
+                                             // Response: [report keycode]
+                                             //   keycode: ASCII key code or 00 if no key
+    
+    localparam CMD_SCRPOSINP = 8'h25;        // [25 channels] Read screen position inputs (light gun/touch)
+                                             // Args: channel index to read
+                                             // Response: [report pos_data...]
+                                             //   pos_data: 4 bytes [x_MSB x_LSB y_MSB y_LSB]
+    
+    localparam CMD_MISCSWINP = 8'h26;        // [26 bytes] Read miscellaneous switch inputs
+                                             // Args: bytes (number of misc input bytes, depends on bits defined in feature check)
+                                             // Response: [report misc_data...]
+                                             //   misc_data: specified number of misc input bytes
+
+    localparam CMD_PAYCNT = 8'h2E;           // [2E channel_index] Payout coins/tokens aka. redemption
+                                             // Args: channel_index
+                                             // Response: [report hopper_status remaining_hi remaining_mid remaining_low]
+
+    localparam CMD_RETRANSMIT = 8'h2F;       // [2F] Retransmit previous response
+                                             // Args: none
+                                             // Response: Previous response is retransmitted
+
+    localparam CMD_COINDEC = 8'h30;          // [30 slots_index amount_msb amount_lsb] Decrease selected coin counter of specified value
+                                             // Args: slot_index, amount_msb, amount_lsb
+                                             // Response: [report] - report=01 if success
+
+    localparam CMD_PAYINC = 8'h31;           // [31 slots payval...] Increase payout counters
+                                             // Args: slots (number of payout slots), payval per slot (increase amount)
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_OUTPUT1 = 8'h32;          // [32 bytes data...] General purpose output 1
+                                             // Args: bytes (number of output bytes), data per byte
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_ANLOUT = 8'h33;           // [33 channels data...] Analog output control
+                                             // Args: channels (number of analog outputs), 2 bytes data per channel [MSB LSB]
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_CHAROUT = 8'h34;          // [34 line pos string...] Character display output
+                                             // Args: line (display line), pos (position), string data
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_COININC = 8'h35;          // [35 slots incval...] Increase coin counters
+                                             // Args: slots (number of coin slots), incval per slot (increase amount)
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_PAYDEC = 8'h36;           // [36 slots decval...] Decrease payout counters
+                                             // Args: slots (number of payout slots), decval per slot (decrease amount)
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_OUTPUT2 = 8'h37;          // [37 bytes data...] General purpose output 2
+                                             // Args: bytes (number of output bytes), data per byte
+                                             // Response: [report] - report=01 if success
+    
+    localparam CMD_OUTPUT3 = 8'h38;          // [38 bytes data...] General purpose output 3
+                                             // Args: bytes (number of output bytes), data per byte
+                                             // Response: [report] - report=01 if success
+    
+
+    // Status Codes - General response status (position 3 in frame)
+    localparam STATUS_NORMAL = 8'h01;        // Normal operation status
+    localparam STATUS_UNKNOWN_CMD = 8'h02;   // Unknown command received  
+    localparam STATUS_SUM_ERROR = 8'h03;     // Checksum error in received data
+    localparam STATUS_ACK_OVERFLOW = 8'h04;  // Acknowledgment overflow
+    localparam STATUS_BUSY = 8'h05;          // Device busy, cannot process command
+    
+    // Report Codes - Command-specific status (position 4+ in frame)
+    localparam REPORT_NORMAL = 8'h01;        // Normal operation
+    localparam REPORT_PARAM_ERROR_COUNT = 8'h02; // Parameter error (incorrect number)
     localparam REPORT_PARAM_ERROR_DATA = 8'h03;  // Parameter error (invalid data)
-    localparam REPORT_BUSY = 8'h04;          // Busy (I/O board cannot receive more commands)
+    localparam REPORT_BUSY = 8'h04;          // Busy (cannot receive more commands)
+    
 
     // JVS Escape sequence constants for data byte escaping
     localparam JVS_ESCAPE_BYTE = 8'hD0;      // Escape marker byte
     localparam JVS_ESCAPED_E0 = 8'hDF;       // E0 becomes D0 DF
     localparam JVS_ESCAPED_D0 = 8'hCF;       // D0 becomes D0 CF
     
-    // JVS Function codes for feature parsing
-    localparam JVS_FUNC_INPUT_DIGITAL = 8'h01;      // Digital input function
-    localparam JVS_FUNC_INPUT_COIN = 8'h02;         // Coin input function
-    localparam JVS_FUNC_INPUT_ANALOG = 8'h03;       // Analog input function  
-    localparam JVS_FUNC_INPUT_ROTARY = 8'h04;       // Rotary encoder function
-    localparam JVS_FUNC_INPUT_KEYCODE = 8'h05;      // Keycode input function
-    localparam JVS_FUNC_INPUT_SCREEN_POS = 8'h06;   // Screen position input aka. touch
-    localparam JVS_FUNC_INPUT_MISC_DIGITAL = 8'h07; // Suplementary digital input
-
-    localparam JVS_FUNC_OUTPUT_CARD = 8'h10;    // Number of output card System ?
-    localparam JVS_FUNC_OUTPUT_MEDALS = 8'h11;  // Aka. Redemption dispenser
-    localparam JVS_FUNC_OUTPUT_DIGITAL = 8'h12; // Digital output function (lights or guns recoil)
-    localparam JVS_FUNC_OUTPUT_ANALOG = 8'h13;  // Analog output function (light intensity on namco noir)
-    localparam JVS_FUNC_OUTPUT_CHAR_DEVICE = 8'h14; // Text LCD display or Printer
-    localparam JVS_FUNC_OUTPUT_BACKUP = 8'h15; // Has backup data for data such as number of coins (?)
+    // Function Codes - Used in feature check responses
+    localparam FUNC_INPUT_DIGITAL = 8'h01;    // [01 players bytesperplayer unused] Digital inputs
+    localparam FUNC_INPUT_COIN = 8'h02;       // [02 slots unused unused] Coin inputs
+    localparam FUNC_INPUT_ANALOG = 8'h03;     // [03 channels bits unused] Analog inputs (channels×bits resolution)
+    localparam FUNC_INPUT_ROTARY = 8'h04;     // [04 channels unused unused] Rotary encoder inputs
+    localparam FUNC_INPUT_KEYCODE = 8'h05;    // [05 unused unused unused] Keycode inputs
+    localparam FUNC_INPUT_SCREEN_POS = 8'h06; // [06 channels bits unused] Screen position inputs (channels×bits)
+    localparam FUNC_INPUT_MISC_DIGITAL = 8'h07; // [07 bytes unused unused] Miscellaneous digital inputs
+    localparam FUNC_OUTPUT_CARD = 8'h10;      // [10 slots unused unused] Card system outputs
+    localparam FUNC_OUTPUT_HOPPER = 8'h11;    // [11 slots unused unused] Medal/token hopper outputs  
+    localparam FUNC_OUTPUT_DIGITAL = 8'h12;   // [12 bytes unused unused] Digital outputs (lights/solenoids)
+    localparam FUNC_OUTPUT_ANALOG = 8'h13;    // [13 channels unused unused] Analog outputs
+    localparam FUNC_OUTPUT_CHAR = 8'h14;      // [14 lines columns type] Character display outputs
+    localparam FUNC_OUTPUT_BACKUP = 8'h15;    // [15 unused unused unused] Backup data support
 
     localparam JVS_FUNC_LENGTH = 8'd4;          // Each function block is 4 bytes long
     
@@ -266,14 +400,15 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     // Additional RX states for input parsing (using 5-bit to expand beyond 3'h7)
     localparam RX_PARSE_INPUTS_START = 5'h8;   // Initialize input response parsing
     localparam RX_PARSE_INPUTS_SWITCH = 5'h9;  // Parse switch inputs data
-    localparam RX_PARSE_SWINP_PLAYER = 5'hE;   // Parse individual player SWINP data (recursive)
-    localparam RX_PARSE_INPUTS_COIN = 5'hA;    // Parse coin inputs data  
-    localparam RX_PARSE_INPUTS_ANALOG = 5'hB;  // Parse analog inputs data
-    localparam RX_PARSE_INPUTS_ROTARY = 5'hC;  // Parse rotary inputs data
+    localparam RX_PARSE_SWINP_PLAYER = 5'hA;   // Parse individual player SWINP data (recursive)
+    localparam RX_PARSE_INPUTS_COIN = 5'hB;    // Parse coin inputs data  
+    localparam RX_PARSE_INPUTS_ANALOG = 5'hC;  // Parse analog inputs data
+    localparam RX_PARSE_INPUTS_ANALOG_DATA = 5'hD; // Parse analog inputs channel ANLINP data (recursive)
+    localparam RX_PARSE_INPUTS_ROTARY = 5'hE;  // Parse rotary inputs data
     localparam RX_PARSE_INPUTS_KEYCODE = 5'hF;  // Parse keycode inputs data
     localparam RX_PARSE_INPUTS_SCREEN_POS = 5'h10; // Parse screen position inputs data 
     localparam RX_PARSE_INPUTS_MISC_DIGITAL = 5'h11; // Parse misc digital inputs data
-    localparam RX_PARSE_INPUTS_COMPLETE = 5'hD; // Complete parsing and return to idle
+    localparam RX_PARSE_INPUTS_COMPLETE = 5'h12; // Complete parsing and return to idle
 
     //=========================================================================
     // STATE VARIABLES AND CONTROL REGISTERS
@@ -298,9 +433,15 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     logic [7:0] rx_checksum;       // Running checksum verification
     // Generic copy variables (used for unescape and name copying)
     logic [7:0] copy_read_idx;      // Read index for copy operations
+    
+    // Single player analog concatenation registers (24-bit each for MSB+LSB)
+    logic [23:0] p1_analog_x_24bit; // X axis: Ch1(MSB 12-bit) + Ch3(LSB 12-bit)
+    logic [23:0] p1_analog_y_24bit; // Y axis: Ch2(MSB 12-bit) + Ch4(LSB 12-bit)
     logic [7:0] copy_write_idx;     // Write index for copy operations
     logic [7:0] request_build_idx;  // Index register for TX buffer construction
+
     logic [3:0] current_player;     // Current player index for SWINP parsing (0, 1, 2...)
+    logic [3:0] current_channel;    // Current channel index for ANLINP
 
     // Timing and protocol control
     logic [31:0] delay_counter;    // Multi-purpose delay counter
@@ -503,8 +644,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // JVS requires two reset commands for reliable initialization
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0 - Frame start
                     tx_buffer[JVS_ADDR_POS] <= JVS_BROADCAST_ADDR;  // FF - Broadcast to all devices
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_RESET_B1;        // F0 - Reset command byte 1
-                    tx_buffer[JVS_CMD_START + 1] <= CMD_RESET_B2;        // D9 - Reset command byte 2
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_RESET;        // F0 - Reset command byte 1
+                    tx_buffer[JVS_CMD_START + 1] <= CMD_RESET_ARG;        // D9 - Reset command byte 2
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 1;               // 1 data byte + overhead
                     rs485_tx_request <= 1'b1;           // Request transmission
                     last_tx_state <= STATE_FIRST_RESET; // Remember command for response handling
@@ -534,8 +675,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // Prepare second RESET command frame (identical to first)
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= JVS_BROADCAST_ADDR;  // FF
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_RESET_B1;        // F0
-                    tx_buffer[JVS_CMD_START + 1] <= CMD_RESET_B2;        // D9
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_RESET;        // F0
+                    tx_buffer[JVS_CMD_START + 1] <= CMD_RESET_ARG;        // D9
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 1;               // 1 data byte + overhead
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SECOND_RESET;
@@ -582,7 +723,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // This requests the device to send its identification string
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01 - Address specific device
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_READID;          // 10 - Read ID command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_IOIDENT;          // 10 - Read ID command
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 0;               // 0 data byte + overhead (just command)
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SEND_READID;
@@ -744,7 +885,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         // Process response based on command sent
                         case (tx_buffer[JVS_CMD_START])
                             CMD_SETADDR: main_state <= STATE_SEND_READID;    // Address set, now read ID
-                            CMD_READID: main_state <= STATE_SEND_CMDREV;     // ID read, get command revision
+                            CMD_IOIDENT: main_state <= STATE_SEND_CMDREV;     // ID read, get command revision
                             CMD_CMDREV: main_state <= STATE_SEND_JVSREV;     // Command revision read, get JVS revision
                             CMD_JVSREV: main_state <= STATE_SEND_COMMVER;    // JVS revision read, get comm version
                             CMD_COMMVER: main_state <= STATE_SEND_FEATCHK;   // Comm version read, check features
@@ -752,7 +893,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                                 jvs_data_ready_init <= 1'b1;               // Indicate initialization complete
                                 main_state <= STATE_IDLE;           // Features checked, start polling
                             end
-                            CMD_READ_INPUTS: main_state <= STATE_IDLE;
+                            CMD_SWINP: main_state <= STATE_IDLE;
                             default: main_state <= STATE_IDLE;
                         endcase
                     //end else if (timeout_counter < 32'h0C3500) begin  // 10ms timeout - fast for responsive gaming
@@ -762,7 +903,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         // Timeout handling - different strategies for different commands
                         case (tx_buffer[JVS_CMD_START])
                             CMD_SETADDR: main_state <= STATE_FIRST_RESET;    // Critical - restart sequence
-                            CMD_READID: main_state <= STATE_SEND_READID;     // Retry ID read
+                            CMD_IOIDENT: main_state <= STATE_SEND_READID;     // Retry ID read
                             CMD_CMDREV: main_state <= STATE_SEND_CMDREV;     // Retry command revision
                             CMD_JVSREV: main_state <= STATE_SEND_JVSREV;     // Retry JVS revision
                             CMD_COMMVER: main_state <= STATE_SEND_COMMVER;   // Retry comm version
@@ -780,7 +921,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_players[current_device_addr - 1] > 0) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add SWINP command and parameters using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_READ_INPUTS; // 20 - SWINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_SWINP; // 20 - SWINP command
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_players[current_device_addr - 1];  // Number of players
                         request_build_idx = request_build_idx + 1;
@@ -925,6 +1066,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             jvs_nodes_r.node_has_screen_pos[0] <= 1'b0;
             jvs_nodes_r.node_screen_pos_x_bits[0] <= 8'h0;
             jvs_nodes_r.node_screen_pos_y_bits[0] <= 8'h0;
+            // Initialize has_screen_pos output
+            has_screen_pos <= 1'b0;
             jvs_nodes_r.node_misc_digital_inputs[0] <= 16'h0;
             // Output capabilities
             jvs_nodes_r.node_digital_outputs[0] <= 8'h0;
@@ -1120,43 +1263,45 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             // INPUT FUNCTIONS (0x01 - 0x07)
                             //=========================================================
                             
-                            JVS_FUNC_INPUT_DIGITAL: begin // 0x01
+                            FUNC_INPUT_DIGITAL: begin // 0x01
                                 // Digital input: param1=players, param2=buttons config
                                 jvs_nodes_r.node_players[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
                                 jvs_nodes_r.node_buttons[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
                             end
                             
-                            JVS_FUNC_INPUT_COIN: begin // 0x02
+                            FUNC_INPUT_COIN: begin // 0x02
                                 // Coin input: param1=number of coin slots
                                 jvs_nodes_r.node_coin_slots[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
                             end
                             
-                            JVS_FUNC_INPUT_ANALOG: begin // 0x03
+                            FUNC_INPUT_ANALOG: begin // 0x03
                                 // Analog input: param1=number of channels, param2=bits of precision
                                 jvs_nodes_r.node_analog_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
                                 jvs_nodes_r.node_analog_bits[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
                             end
                             
-                            JVS_FUNC_INPUT_ROTARY: begin // 0x04
+                            FUNC_INPUT_ROTARY: begin // 0x04
                                 // Rotary input: param1=number of channels
                                 jvs_nodes_r.node_rotary_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
                             end
                             
-                            JVS_FUNC_INPUT_KEYCODE: begin // 0x05
+                            FUNC_INPUT_KEYCODE: begin // 0x05
                                 // Keycode input function - PARSED BUT NOT SUPPORTED YET
                                 // Parameters: 0, 0, 0 (no parameters according to JVS spec)
                                 jvs_nodes_r.node_has_keycode_input[current_device_addr - 1] <= 1'b1;
                             end
                             
-                            JVS_FUNC_INPUT_SCREEN_POS: begin // 0x06
-                                // Screen position input (touch/lightgun) - PARSED BUT NOT SUPPORTED YET
+                            FUNC_INPUT_SCREEN_POS: begin // 0x06
+                                // Screen position input (touch/lightgun) - PARSED AND SUPPORTED
                                 // Parameters: Xbits, Ybits, channels (resolution only, not position)
                                 jvs_nodes_r.node_has_screen_pos[current_device_addr - 1] <= 1'b1;
                                 jvs_nodes_r.node_screen_pos_x_bits[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
                                 jvs_nodes_r.node_screen_pos_y_bits[current_device_addr - 1] <= rx_buffer[copy_read_idx + 2];
+                                // Set has_screen_pos for any device that supports screen position
+                                has_screen_pos <= 1'b1;
                             end
                             
-                            JVS_FUNC_INPUT_MISC_DIGITAL: begin // 0x07
+                            FUNC_INPUT_MISC_DIGITAL: begin // 0x07
                                 // Miscellaneous digital input - PARSED BUT NOT SUPPORTED YET
                                 // Parameters: SW MSB, SW LSB, 0 (16-bit switch count)
                                 jvs_nodes_r.node_misc_digital_inputs[current_device_addr - 1] <= {rx_buffer[copy_read_idx + 1], rx_buffer[copy_read_idx + 2]};
@@ -1166,27 +1311,27 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             // OUTPUT FUNCTIONS (0x10 - 0x15)
                             //=========================================================
                             
-                            JVS_FUNC_OUTPUT_CARD: begin // 0x10
+                            FUNC_OUTPUT_CARD: begin // 0x10
                                 // Card system output - PARSED BUT NOT SUPPORTED YET
                                 jvs_nodes_r.node_card_system_slots[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
                             end
                             
-                            JVS_FUNC_OUTPUT_MEDALS: begin // 0x11
+                            FUNC_OUTPUT_HOPPER: begin // 0x11
                                 // Medal hopper output - PARSED BUT NOT SUPPORTED YET
                                 jvs_nodes_r.node_medal_hopper_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
                             end
                             
-                            JVS_FUNC_OUTPUT_DIGITAL: begin // 0x12
+                            FUNC_OUTPUT_DIGITAL: begin // 0x12
                                 // Digital output: param1=number of outputs
                                 jvs_nodes_r.node_digital_outputs[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1];
                             end
                             
-                            JVS_FUNC_OUTPUT_ANALOG: begin // 0x13
+                            FUNC_OUTPUT_ANALOG: begin // 0x13
                                 // Analog output: param1=number of channels
                                 jvs_nodes_r.node_analog_output_channels[current_device_addr - 1] <= rx_buffer[copy_read_idx + 1][3:0];
                             end
                             
-                            JVS_FUNC_OUTPUT_CHAR_DEVICE: begin // 0x14
+                            FUNC_OUTPUT_CHAR: begin // 0x14
                                 // Character/text display output - PARSED BUT NOT SUPPORTED YET
                                 // Parameters: width, height, type
                                 jvs_nodes_r.node_has_char_display[current_device_addr - 1] <= 1'b1;
@@ -1195,7 +1340,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                                 jvs_nodes_r.node_char_display_type[current_device_addr - 1] <= rx_buffer[copy_read_idx + 3];
                             end
                             
-                            JVS_FUNC_OUTPUT_BACKUP: begin // 0x15
+                            FUNC_OUTPUT_BACKUP: begin // 0x15
                                 // Backup data function - PARSED BUT NOT SUPPORTED YET
                                 jvs_nodes_r.node_has_backup[current_device_addr - 1] <= 1'b1;
                             end
@@ -1237,31 +1382,29 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             
             // RX_PARSE_INPUTS_SWITCH - Parse switch inputs report and system byte
             if (rx_state == RX_PARSE_INPUTS_SWITCH) begin
-                // Check SWINP report byte
-                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
-                    // SWINP function failed, skip to next function
-                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
-                    rx_state <= RX_PARSE_INPUTS_COIN;
-                end else begin
-                    // SWINP report is normal, advance past report byte and system byte
-                    copy_read_idx <= copy_read_idx + 2; // Skip report byte + system byte, now points to first player data
-                    
-                    if (jvs_nodes.node_players[current_device_addr - 1] > 0) begin
+                if (jvs_nodes.node_players[current_device_addr - 1] > 0) begin
+                    // Check SWINP report byte
+                    if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                        // SWINP function failed, skip to next function
+                        copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                        rx_state <= RX_PARSE_INPUTS_COIN;
+                    end else begin
+                        // SWINP report is normal, advance past report byte and system byte
+                        copy_read_idx <= copy_read_idx + 2; // Skip report byte + system byte, now points to first player data
                         // Initialize player parsing
                         current_player <= 4'd0; // Start with player 0
                         rx_state <= RX_PARSE_SWINP_PLAYER; // Go to player parsing state
-                    end else begin
-                        // No players, clear all states and skip to next function
-                        p1_btn_state <= 16'h0000;
-                        p2_btn_state <= 16'h0000;
-                        rx_state <= RX_PARSE_INPUTS_COIN;
                     end
+                end else begin
+                    rx_state <= RX_PARSE_INPUTS_COIN;
                 end
             end
             
             // RX_PARSE_SWINP_PLAYER - Parse individual player SWINP data (recursive)
             if (rx_state == RX_PARSE_SWINP_PLAYER) begin
                 // Parse current player data
+                // @TODO: require chained JVS node support then use jvs_nodes.node_players[current_device_addr - 1] 
+                //        and current_device_addr to expand player 3,4 and above to other nodes
                 case (current_player)
                     4'd0: begin // Player 1
                         // First player data byte
@@ -1313,7 +1456,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     
                     default: begin
-                        // Player 3+ not supported, clear states  
+                        // Player 3+ not supported yet, clear states  
                     end
                 endcase
                 
@@ -1330,73 +1473,145 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             
             // RX_PARSE_INPUTS_COIN - Parse coin inputs data  
             if (rx_state == RX_PARSE_INPUTS_COIN) begin
-                // Check COININP report byte
-                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
-                    // COININP function failed, skip to next function
-                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
-                    rx_state <= RX_PARSE_INPUTS_ANALOG;
-                end else begin
-                    // COININP report is normal, advance past report byte
-                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
-                    
-                    if (jvs_nodes.node_coin_slots[current_device_addr - 1] > 0) begin
-                        // Parse coin counter data (2 bytes per coin slot)
-                        // Each coin slot has MSB and LSB for coin count
+                if (jvs_nodes.node_coin_slots[current_device_addr - 1] > 0) begin
+                    // Check COININP report byte
+                    if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                        // COININP function failed, skip to next function
+                        copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                        rx_state <= RX_PARSE_INPUTS_ANALOG;
+                    end else begin
+                        // COININP report is normal, advance past report byte
+                        copy_read_idx <= copy_read_idx + 1 + (jvs_nodes.node_coin_slots[current_device_addr - 1] * 2);; // Skip report byte and coin data
                         
-                        // For now, we just advance past the coin data without processing it
-                        // TODO: Implement coin counter processing if needed
-                        copy_read_idx <= copy_read_idx + (jvs_nodes.node_coin_slots[current_device_addr - 1] * 2);
+                        // @TODO: ADD sub coin parsing state
+                        // @TODO: report COIN INCREASE to a coin output
+                        /*
+                        // Parse coin data (2 bytes per coin slot)
+                        // Format: [condition(2 bits) counter_MSB(6 bits)] [counter_LSB]
+                        logic [1:0] coin_condition;
+                        logic [5:0] counter_msb;
+                        logic [7:0] counter_lsb;
+                        logic [13:0] coin_counter; // 14-bit coin counter (6+8 bits)
+                        
+                        // Parse first coin slot data (can be extended for multiple slots)
+                        coin_condition = rx_buffer[copy_read_idx][7:6];        // Top 2 bits = condition
+                        counter_msb = rx_buffer[copy_read_idx][5:0];           // Bottom 6 bits = counter MSB
+                        counter_lsb = rx_buffer[copy_read_idx + 1];            // Next byte = counter LSB
+                        coin_counter = {counter_msb, counter_lsb};             // Combine into 14-bit counter
+                        
+                        // Check coin condition and handle accordingly
+                        case (coin_condition)
+                            COIN_CONDITION_NORMAL: begin
+                                // Normal operation - coin counter is valid
+                                // TODO: Store/use coin_counter value if needed
+                            end
+                            COIN_CONDITION_JAM: begin
+                                // Coin jam detected - counter may not be accurate
+                                // TODO: Handle jam condition (display warning, etc.)
+                            end  
+                            COIN_CONDITION_DISCONNECTED: begin
+                                // Coin mechanism disconnected - counter invalid
+                                // TODO: Handle disconnection (disable coin features)
+                            end
+                            COIN_CONDITION_BUSY: begin
+                                // Coin mechanism busy - temporary state
+                                // TODO: Handle busy state (retry later, etc.)
+                            end
+                        endcase
+                        */
                     end
                 end
                 rx_state <= RX_PARSE_INPUTS_ANALOG;
             end
             
-            // RX_PARSE_INPUTS_ANALOG - Parse analog inputs data
+            // RX_PARSE_INPUTS_ANALOG - Parse analog inputs data // 01
             if (rx_state == RX_PARSE_INPUTS_ANALOG) begin
-                // Check ANLINP report byte
-                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
-                    // ANLINP function failed, skip to next function
-                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
-                    rx_state <= RX_PARSE_INPUTS_ROTARY;
+                if (jvs_nodes.node_analog_channels[current_device_addr - 1] > 0) begin
+                    // Check ANLINP report byte
+                    if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                        // ANLINP function failed, skip to next function
+                        copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                        rx_state <= RX_PARSE_INPUTS_ROTARY;
+                    end else begin // 01
+                        // ANLINP report is normal, advance past report byte
+                        copy_read_idx <= copy_read_idx + 1; // Skip report byte and point to analog channel values
+                        p1_joy_state <= 32'h00000000;
+                        p1_analog_x_24bit <= 24'h000000;
+                        p1_analog_y_24bit <= 24'h000000;
+                        current_channel <= 4'd0;
+                        rx_state <= RX_PARSE_INPUTS_ANALOG_DATA;
+                    end
                 end else begin
-                    // ANLINP report is normal, advance past report byte
-                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
-                    
-                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] > 0) begin
-                    // Parse analog input data (2 bytes per channel in 16-bit format)
-                    
-                    // Parse analog data and update joystick states
-                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 1) begin
-                        // First analog channel -> P1 X axis
-                        p1_joy_state[31:24] <= rx_buffer[copy_read_idx];     // MSB
-                        p1_joy_state[23:16] <= rx_buffer[copy_read_idx + 1]; // LSB
-                    end
-                    
-                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 2) begin
-                        // Second analog channel -> P1 Y axis
-                        p1_joy_state[15:8] <= rx_buffer[copy_read_idx + 2];
-                        p1_joy_state[7:0] <= rx_buffer[copy_read_idx + 3];
-                    end
-                    
-                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 3) begin
-                        // Third analog channel -> P2 X axis
-                        p2_joy_state[31:24] <= rx_buffer[copy_read_idx + 4];
-                        p2_joy_state[23:16] <= rx_buffer[copy_read_idx + 5];
-                    end
-                    
-                    if (jvs_nodes.node_analog_channels[current_device_addr - 1] >= 4) begin
-                        // Fourth analog channel -> P2 Y axis
-                        p2_joy_state[15:8] <= rx_buffer[copy_read_idx + 6];
-                        p2_joy_state[7:0] <= rx_buffer[copy_read_idx + 7];
-                    end
-                    
-                        // Advance read index past all analog data (2 bytes per channel)
-                        copy_read_idx <= copy_read_idx + (jvs_nodes.node_analog_channels[current_device_addr - 1] * 2);
-                    end
+                    rx_state <= RX_PARSE_INPUTS_ROTARY;
                 end
-                rx_state <= RX_PARSE_INPUTS_ROTARY;
             end
             
+            if (rx_state == RX_PARSE_INPUTS_ANALOG_DATA) begin   // Ch1:4600 Ch2:4540 Ch3:4480 Ch4:44C0 Ch5:4580 Ch6:4440 Ch7:43C0 ch8:4440
+                // Parse analog input data (2 bytes per channel in 16-bit format)
+                case (current_channel)
+                    4'd0: begin // Channel 1
+                        if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                            // Channel 1: 12-bit MSBs -> X axis MSB [23:12]
+                            p1_analog_x_24bit[23:12] <= {rx_buffer[copy_read_idx],rx_buffer[copy_read_idx + 1][7:4]};
+                        end else begin
+                            p1_joy_state[31:24] <= rx_buffer[copy_read_idx];
+                            p1_joy_state[23:16] <= rx_buffer[copy_read_idx + 1];
+                        end
+                    end
+                    4'd1: begin // Channel 2
+                        if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                            // Channel 2: 12-bit MSBs -> Y axis MSB [23:12]
+                            //p1_analog_x_24bit[11:4] <= rx_buffer[copy_read_idx];
+                            //p1_analog_x_24bit[3:0] <= rx_buffer[copy_read_idx + 1][7:4];
+                        end else begin
+                            p1_joy_state[15:8] <= rx_buffer[copy_read_idx];
+                            p1_joy_state[7:0] <= rx_buffer[copy_read_idx + 1];
+                        end
+                    end
+                    4'd2: begin // Channel 3
+                        if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                            // Channel 3: 12-bit MSBs -> X axis LSB [11:0]
+                            p1_analog_y_24bit[23:12] <= {rx_buffer[copy_read_idx],rx_buffer[copy_read_idx + 1][7:4]};
+                        end else begin
+                            p2_joy_state[31:24] <= rx_buffer[copy_read_idx];
+                            p2_joy_state[23:16] <= rx_buffer[copy_read_idx + 1];
+                        end
+                    end
+                    4'd3: begin // Channel 4
+                        if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                            // Channel 4: 12-bit MSBs -> Y axis LSB [11:0]
+                            //p1_analog_y_24bit[11:4] <= rx_buffer[copy_read_idx];
+                            //p1_analog_y_24bit[3:0] <= rx_buffer[copy_read_idx + 1][7:4];
+                        end else begin
+                            p2_joy_state[15:8] <= rx_buffer[copy_read_idx];
+                            p2_joy_state[7:0] <= rx_buffer[copy_read_idx + 1];
+                        end
+                    end
+                    4'd4: begin // Channel 5
+                    end
+                    4'd5: begin // Channel 6
+                    end
+                    4'd6: begin // Channel 7
+                    end
+                    4'd7: begin // Channel 8
+                    end
+                    default: begin
+                    end
+                endcase
+                // Advance read index past all analog data (2 bytes per channel)
+                copy_read_idx <= copy_read_idx + 2;
+                current_channel <= current_channel + 1;
+                if (current_channel + 1 >= jvs_nodes.node_analog_channels[current_device_addr - 1]) begin
+                    if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                        // Output: Use full 24-bit values, take most significant 16 bits
+                        p1_joy_state[31:16] <= ~p1_analog_x_24bit[23:8];
+                        p1_joy_state[15:0] <= ~p1_analog_y_24bit[23:8];
+                    end
+                    rx_state <= RX_PARSE_INPUTS_ROTARY; // All channels processed, go to next function
+                end
+                // else stay in RX_PARSE_INPUTS_ANALOG_DATA for next channel
+            end
+
             // RX_PARSE_INPUTS_ROTARY - Parse rotary inputs data
             if (rx_state == RX_PARSE_INPUTS_ROTARY) begin
                 if (jvs_nodes.node_rotary_channels[current_device_addr - 1] > 0) begin
@@ -1410,22 +1625,24 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             
             // RX_PARSE_INPUTS_KEYCODE - Parse keycode inputs data
             if (rx_state == RX_PARSE_INPUTS_KEYCODE) begin
-                // Check KEYINP report byte
-                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
-                    // KEYINP function failed, skip to next function
-                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
-                    rx_state <= RX_PARSE_INPUTS_SCREEN_POS;
-                end else begin
-                    // KEYINP report is normal, advance past report byte
-                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
-                    
-                    if (jvs_nodes.node_has_keycode_input[current_device_addr - 1]) begin
-                        // Parse keycode input data
-                        // Keycode input format: variable length depending on device
-                        // For now, we just advance past the keycode data without processing it
-                        // TODO: Implement keycode processing if needed
-                        // Assuming 1 byte for simplicity, adjust if needed based on device specs
-                        copy_read_idx <= copy_read_idx + 1;
+                if (jvs_nodes.node_has_keycode_input[current_device_addr - 1]) begin
+                    // Check KEYINP report byte
+                    if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                        // KEYINP function failed, skip to next function
+                        copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                        rx_state <= RX_PARSE_INPUTS_SCREEN_POS;
+                    end else begin
+                        // KEYINP report is normal, advance past report byte
+                        copy_read_idx <= copy_read_idx + 1; // Skip report byte
+                        
+                        if (jvs_nodes.node_has_keycode_input[current_device_addr - 1]) begin
+                            // Parse keycode input data
+                            // Keycode input format: variable length depending on device
+                            // For now, we just advance past the keycode data without processing it
+                            // TODO: Implement keycode processing if needed
+                            // Assuming 1 byte for simplicity, adjust if needed based on device specs
+                            copy_read_idx <= copy_read_idx + 1;
+                        end
                     end
                 end
                 rx_state <= RX_PARSE_INPUTS_SCREEN_POS;
@@ -1433,20 +1650,19 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             
             // RX_PARSE_INPUTS_SCREEN_POS - Parse screen position inputs data
             if (rx_state == RX_PARSE_INPUTS_SCREEN_POS) begin
-                // Check SCRPOSINP report byte
-                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
-                    // SCRPOSINP function failed, skip to next function
-                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
-                    rx_state <= RX_PARSE_INPUTS_MISC_DIGITAL;
-                end else begin
-                    // SCRPOSINP report is normal, advance past report byte
-                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
-                    
-                    if (jvs_nodes.node_has_screen_pos[current_device_addr - 1]) begin
+                if (jvs_nodes.node_has_screen_pos[current_device_addr - 1]) begin
+                    // Check SCRPOSINP report byte
+                    if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                        // SCRPOSINP function failed, skip to next function
+                        copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                        rx_state <= RX_PARSE_INPUTS_MISC_DIGITAL;
+                    end else begin
+                        // SCRPOSINP report is normal, advance past report byte
+                        copy_read_idx <= copy_read_idx + 1; // Skip report byte
                         // Parse screen position data
                         // Screen position format: Always 4 bytes = X_MSB, X_LSB, Y_MSB, Y_LSB (per JVS spec)
-                        // For now, we just advance past the screen position data without processing it
-                        // TODO: Implement screen position processing if needed
+                        screen_pos_x <= {rx_buffer[copy_read_idx], rx_buffer[copy_read_idx + 1]};
+                        screen_pos_y <= {rx_buffer[copy_read_idx + 2], rx_buffer[copy_read_idx + 3]};
                         copy_read_idx <= copy_read_idx + 4; // Fixed 4 bytes per JVS specification
                     end
                 end
@@ -1455,21 +1671,19 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             
             // RX_PARSE_INPUTS_MISC_DIGITAL - Parse misc digital inputs data
             if (rx_state == RX_PARSE_INPUTS_MISC_DIGITAL) begin
-                // Check MISCSWINP report byte
-                if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
-                    // MISCSWINP function failed, skip to complete
-                    copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
-                    rx_state <= RX_PARSE_INPUTS_COMPLETE;
-                end else begin
-                    // MISCSWINP report is normal, advance past report byte
-                    copy_read_idx <= copy_read_idx + 1; // Skip report byte
-                    
-                    if (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] > 0) begin
+                if (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] > 0) begin
+                    // Check MISCSWINP report byte
+                    if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                        // MISCSWINP function failed, skip to complete
+                        copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                        rx_state <= RX_PARSE_INPUTS_COMPLETE;
+                    end else begin
+                        // MISCSWINP report is normal, advance past report byte
+                        copy_read_idx <= copy_read_idx + 1 + ((jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] + 7) / 8);; // Skip report byte and data
                         // Parse misc digital input data
                         // Calculate bytes needed for misc digital inputs (inline calculation)
                         // For now, we just advance past the misc digital data without processing it
-                        // TODO: Implement misc digital input processing if needed
-                        copy_read_idx <= copy_read_idx + ((jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] + 7) / 8);
+                        // TODO: Implement misc digital input processing if needed with substate
                     end
                 end
                 rx_state <= RX_PARSE_INPUTS_COMPLETE;

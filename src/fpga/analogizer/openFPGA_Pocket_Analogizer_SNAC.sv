@@ -109,7 +109,12 @@ module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
     output jvs_node_info_t jvs_nodes,
     //RAM interface for node names (for debug/display purposes)
     output logic [7:0] node_name_rd_data,
-    input logic [6:0] node_name_rd_addr
+    input logic [6:0] node_name_rd_addr,
+    
+    // Snac gun register
+    output reg snac_gun_trigger,
+    output reg [11:0] snac_gun_x,
+    output reg [11:0] snac_gun_y
 ); 
     //
     logic SNAC_OUT1 ; //cart_tran_bank1[6]                                           D-
@@ -455,6 +460,11 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
     wire [31:0] jvs_joy4 /* synthesis keep */;
     wire JVS_UART_TX /* synthesis keep */;
     wire JVS_485_DIR /* synthesis keep */;
+    
+    // Screen position outputs from JVS controller
+    wire [15:0] jvs_screen_pos_x /* synthesis keep */;
+    wire [15:0] jvs_screen_pos_y /* synthesis keep */;
+    wire jvs_has_screen_pos /* synthesis keep */;
 
     jvs_controller #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) jvs_inst (
         .i_clk(i_clk),
@@ -474,6 +484,12 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
         //.p3_joy_state(jvs_joy3),
         .p4_btn_state(jvs_p4),
         //.p4_joy_state(jvs_joy4),
+        
+        // Screen position outputs (light gun/touch screen)
+        .screen_pos_x(jvs_screen_pos_x),
+        .screen_pos_y(jvs_screen_pos_y),
+        .has_screen_pos(jvs_has_screen_pos),
+        
         //JVS node info
         .jvs_data_ready(jvs_data_ready),
         .jvs_nodes(jvs_nodes),
@@ -550,6 +566,11 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
             //p3_joy_state = jvs_joy3;
             p4_btn_state = jvs_p4;
             //p4_joy_state = jvs_joy4;
+            
+            // JVS gun mapping: extract coordinates from analog channels
+            snac_gun_trigger = jvs_p1[2]; // Left direction for trigger
+            snac_gun_x = jvs_joy1[31:20]; // Gun X = Ch1(MSB) + upper part of Ch3(LSB), 12-bit
+            snac_gun_y = jvs_joy1[15:4];  // Gun Y = Ch2(MSB) + upper part of Ch4(LSB), 12-bit
         end
         default: begin
             SNAC_OUT1 = 1'b0;
@@ -558,7 +579,14 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
             p2_btn_state = 16'h0;
             p3_btn_state = 16'h0; 
             p4_btn_state = 16'h0;
+            
+            // Initialize SNAC gun outputs
+            snac_gun_trigger = 1'b0;
+            snac_gun_x = 12'd159;
+            snac_gun_y = 12'd119;
         end
         endcase
     end
+
+    
 endmodule

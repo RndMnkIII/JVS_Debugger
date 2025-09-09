@@ -68,6 +68,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     output logic [15:0] screen_pos_x,   // Screen X position (16-bit from JVS)
     output logic [15:0] screen_pos_y,   // Screen Y position (16-bit from JVS)
     output logic has_screen_pos,        // Device supports screen position inputs
+    
+    // GPIO control from SNAC
+    input logic [7:0] gpio_output_value, // GPIO output value from SNAC (0x80=active, 0x00=inactive)
 
     //JVS node information structure
     output logic jvs_data_ready,
@@ -379,8 +382,9 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam STATE_SEND_INPUTS_KEYCODE = 5'h16;  // Add keycode inputs if available
     localparam STATE_SEND_INPUTS_SCREEN = 5'h17;   // Add screen position inputs if available
     localparam STATE_SEND_INPUTS_MISC = 5'h18;     // Add misc inputs if available
-    localparam STATE_SEND_INPUTS_FINALIZE = 5'h19; // Finalize frame and transmit
-
+    localparam STATE_SEND_OUTPUT_DIGITAL = 5'h19; // Send output digital command for GPIO
+    localparam STATE_SEND_FINALIZE = 5'h1A; // Finalize frame and transmit
+    
     // RS485 State Machine - Controls transceiver direction with proper timing
     localparam RS485_RECEIVE = 2'b00;         // Receive mode (default)
     localparam RS485_TX_SETUP = 2'b01;        // Setup time before transmission
@@ -408,7 +412,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     localparam RX_PARSE_INPUTS_KEYCODE = 5'hF;  // Parse keycode inputs data
     localparam RX_PARSE_INPUTS_SCREEN_POS = 5'h10; // Parse screen position inputs data 
     localparam RX_PARSE_INPUTS_MISC_DIGITAL = 5'h11; // Parse misc digital inputs data
-    localparam RX_PARSE_INPUTS_COMPLETE = 5'h12; // Complete parsing and return to idle
+    localparam RX_PARSE_OUTPUT_DIGITAL = 5'h12;  // Parse output digital response
+    localparam RX_PARSE_INPUTS_COMPLETE = 5'h13; // Complete parsing and return to idle
 
     //=========================================================================
     // STATE VARIABLES AND CONTROL REGISTERS
@@ -450,6 +455,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
     logic [7:0] current_device_addr; // Address assigned to JVS device (usually 0x01)
     logic rx_frame_complete;       // Flag indicating frame has been processed and ready for next step
     logic [4:0] last_tx_state;     // Tracks the last command sent for response handling
+    
     
     //=========================================================================
     // JVS NODE INFORMATION STRUCTURES
@@ -644,8 +650,8 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // JVS requires two reset commands for reliable initialization
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0 - Frame start
                     tx_buffer[JVS_ADDR_POS] <= JVS_BROADCAST_ADDR;  // FF - Broadcast to all devices
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_RESET;        // F0 - Reset command byte 1
-                    tx_buffer[JVS_CMD_START + 1] <= CMD_RESET_ARG;        // D9 - Reset command byte 2
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_RESET;        // Reset command (0xF0)
+                    tx_buffer[JVS_CMD_START + 1] <= CMD_RESET_ARG;        // Reset argument (0xD9)
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 1;               // 1 data byte + overhead
                     rs485_tx_request <= 1'b1;           // Request transmission
                     last_tx_state <= STATE_FIRST_RESET; // Remember command for response handling
@@ -707,7 +713,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // This assigns a unique address (0x01) to the JVS device
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= JVS_BROADCAST_ADDR;  // FF - Still broadcast for address assignment
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_SETADDR;         // F1 - Set address command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_SETADDR;         // Set address command (0xF1)
                     tx_buffer[JVS_CMD_START + 1] <= current_device_addr; // 01 - Address to assign
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 1;               // 1 data byte + overhead
                     rs485_tx_request <= 1'b1;
@@ -723,7 +729,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // This requests the device to send its identification string
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01 - Address specific device
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_IOIDENT;          // 10 - Read ID command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_IOIDENT;          // IO identity command (0x10)
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 0;               // 0 data byte + overhead (just command)
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SEND_READID;
@@ -737,7 +743,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // Prepare CMDREV command frame
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_CMDREV;          // 11 - Command revision command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_CMDREV;          // Command revision command (0x11)
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 0;               // 0 data byte + overhead (just command)
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SEND_CMDREV;
@@ -751,7 +757,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // Prepare JVSREV command frame
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_JVSREV;          // 12 - JVS revision command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_JVSREV;          // JVS revision command (0x12)
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 0;               // 0 data byte + overhead (just command)
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SEND_JVSREV;
@@ -765,7 +771,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // Prepare COMMVER command frame
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_COMMVER;         // 13 - Communications version command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_COMMVER;         // Communication version command (0x13)
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 0;               // 0 data byte + overhead (just command)
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SEND_COMMVER;
@@ -779,7 +785,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     // Prepare FEATCHK command frame
                     tx_buffer[JVS_SYNC_POS] <= JVS_SYNC_BYTE;       // E0
                     tx_buffer[JVS_ADDR_POS] <= current_device_addr; // 01
-                    tx_buffer[JVS_CMD_START + 0] <= CMD_FEATCHK;         // 14 - Feature check command
+                    tx_buffer[JVS_CMD_START + 0] <= CMD_FEATCHK;         // Feature check command (0x14)
                     tx_buffer[JVS_LENGTH_POS] <= JVS_OVERHEAD + 0;               // 0 data byte + overhead (just command)
                     rs485_tx_request <= 1'b1;
                     last_tx_state <= STATE_SEND_FEATCHK;
@@ -921,7 +927,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_players[current_device_addr - 1] > 0) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add SWINP command and parameters using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_SWINP; // 20 - SWINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_SWINP; // SWINP command (0x20)
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_players[current_device_addr - 1];  // Number of players
                         request_build_idx = request_build_idx + 1;
@@ -937,7 +943,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_coin_slots[current_device_addr - 1] > 0) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add coin input command using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h21;  // COININP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_COININP; // COININP command (0x21)
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_coin_slots[current_device_addr - 1]; // Number of coin slots
                         request_build_idx = request_build_idx + 1;
@@ -951,7 +957,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_analog_channels[current_device_addr - 1] > 0) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add analog input command using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h22;  // ANLINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_ANLINP; // ANLINP command (0x22)
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_analog_channels[current_device_addr - 1]; // Number of analog channels
                         request_build_idx = request_build_idx + 1;
@@ -965,7 +971,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_rotary_channels[current_device_addr - 1] > 0) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add rotary input command using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h23;  // ROTINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_ROTINP;  // ROTINP command (0x23)
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= jvs_nodes.node_rotary_channels[current_device_addr - 1]; // Number of rotary channels
                         request_build_idx = request_build_idx + 1;
@@ -980,7 +986,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add keycode input command (no parameters) using blocking assignments for index calculations
                         request_build_idx = request_build_idx + 1;
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h24;  // KEYINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_KEYINP;  // KEYINP command (0x24)
                         // Update length with final byte count
                         tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
                     end
@@ -991,7 +997,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_has_screen_pos[current_device_addr - 1]) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add screen position input command using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h25;  // SCRPOSINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_SCRPOSINP;  // SCRPOSINP command (0x25)
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h01;  // Channel index
                         request_build_idx = request_build_idx + 1;
@@ -1005,17 +1011,40 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     if (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] > 0) begin
                         request_build_idx = tx_buffer[JVS_LENGTH_POS];
                         // Add misc switch input command using blocking assignments for index calculations
-                        tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h26;  // MISCSWINP command
+                        tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_MISCSWINP;  // MISCSWINP command (0x26)
                         request_build_idx = request_build_idx + 1;
                         tx_buffer[JVS_CMD_START + request_build_idx] <= (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] + 7) / 8; // Bytes needed
                         request_build_idx = request_build_idx + 1;
                         // Update length with final byte count
                         tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
                     end
-                    main_state <= STATE_SEND_INPUTS_FINALIZE;
+                    main_state <= STATE_SEND_OUTPUT_DIGITAL;
                 end
                 
-                STATE_SEND_INPUTS_FINALIZE: begin
+                STATE_SEND_OUTPUT_DIGITAL: begin
+                    // Check if device has digital outputs
+                    if (jvs_nodes.node_digital_outputs[current_device_addr - 1] > 0) begin
+                        request_build_idx = tx_buffer[JVS_LENGTH_POS];
+                        if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                            // Build OUTPUT1 command frame for GPIO control
+                            tx_buffer[JVS_CMD_START + request_build_idx] <= CMD_OUTPUT1;         // OUTPUT1 command (0x32)
+                            request_build_idx = request_build_idx + 1;
+                            tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h03;           // send 3 bytes (from time crisis 4 capture althouth that FEATCHK report 12 channels/bits?)
+                            request_build_idx = request_build_idx + 1;
+                            tx_buffer[JVS_CMD_START + request_build_idx] <= gpio_output_value;  // Set GPIO1 to current value from SNAC
+                            request_build_idx = request_build_idx + 1;
+                            tx_buffer[JVS_CMD_START + request_build_idx] <= 8'hA0;              // do not know what A is for, but taken from TC4 capture
+                            request_build_idx = request_build_idx + 1;
+                            tx_buffer[JVS_CMD_START + request_build_idx] <= 8'h00;
+                            request_build_idx = request_build_idx + 1;
+                        end
+                        // Update length with final byte count
+                        tx_buffer[JVS_LENGTH_POS] <= request_build_idx;
+                    end
+                    main_state <= STATE_SEND_FINALIZE;
+                end
+
+                STATE_SEND_FINALIZE: begin
                     // Add checksum size byte count to get total frame length
                     tx_buffer[JVS_LENGTH_POS] <= tx_buffer[JVS_LENGTH_POS] + JVS_CHECKSUM_SIZE;
                     // Start transmission
@@ -1023,8 +1052,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     last_tx_state <= STATE_SEND_INPUTS;
                     main_state <= STATE_WAIT_TX_SETUP;
                 end
-
-
+                
                 default: main_state <= STATE_IDLE;
             endcase
         end
@@ -1087,6 +1115,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             p2_joy_state <= 32'h80808080;
             p3_btn_state <= 16'h0000;
             p4_btn_state <= 16'h0000;
+            
 
             
         end else begin
@@ -1094,6 +1123,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
             if (main_state != STATE_WAIT_RX) begin
                 rx_frame_complete <= 1'b0;
             end
+            
             
             // Process incoming bytes from UART
             if (uart_rx_dv) begin
@@ -1417,6 +1447,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                         p1_btn_state[4]  <= rx_buffer[copy_read_idx][1];  // A (push1)
                         p1_btn_state[5]  <= rx_buffer[copy_read_idx][0];  // B (push2)
                         
+                        
                         // Second player data byte if available (additional buttons)
                         if (jvs_nodes.node_buttons[current_device_addr - 1] > 8) begin
                             p1_btn_state[6] <= rx_buffer[copy_read_idx + 1][7];  // X (push3)
@@ -1678,6 +1709,28 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                 rx_state <= RX_PARSE_INPUTS_COMPLETE;
             end
             
+            // RX_PARSE_OUTPUT_DIGITAL - Parse misc digital inputs data
+            if (rx_state == RX_PARSE_OUTPUT_DIGITAL) begin
+                if (jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] > 0) begin
+                    if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
+                        // Check MISCSWINP report byte
+                        if (rx_buffer[copy_read_idx] != REPORT_NORMAL) begin
+                            // MISCSWINP function failed, skip to complete
+                            copy_read_idx <= copy_read_idx + 1; // Skip failed report byte
+                            rx_state <= RX_PARSE_INPUTS_COMPLETE;
+                        end else begin
+                            // MISCSWINP report is normal, advance past report byte
+                            copy_read_idx <= copy_read_idx + 1 + ((jvs_nodes.node_misc_digital_inputs[current_device_addr - 1] + 7) / 8);; // Skip report byte and data
+                            // Parse misc digital input data
+                            // Calculate bytes needed for misc digital inputs (inline calculation)
+                            // For now, we just advance past the misc digital data without processing it
+                            // TODO: Implement misc digital input processing if needed with substate
+                        end
+                    end
+                end
+                rx_state <= RX_PARSE_INPUTS_COMPLETE;
+            end
+
             // RX_PARSE_INPUTS_COMPLETE - Complete parsing and return to idle
             if (rx_state == RX_PARSE_INPUTS_COMPLETE) begin
                 // Input processing complete, signal completion
@@ -1811,7 +1864,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                             rx_state <= RX_IDLE;
                         end
                     end
-                    
+
                     default: begin
                         // For other commands (SETADDR, etc.), just acknowledge receipt
                         // No special processing needed

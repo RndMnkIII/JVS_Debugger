@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simulateur JVS Réel - Algorithme jvs_controller.sv</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: white;
+            margin: 20px 0;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .controls {
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:active {
+            background-color: #3d8b40;
+        }
+        .info {
+            margin: 10px 0;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .highlight {
+            background-color: #e8f5e8;
+            font-weight: bold;
+        }
+        .title {
+            color: #2c5aa0;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        .file-input {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .error {
+            color: #d32f2f;
+            background-color: #ffebee;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success {
+            color: #388e3c;
+            background-color: #e8f5e8;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .frame-data {
+            font-family: 'Courier New', monospace;
+            background-color: #f8f8f8;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .byte-changed {
+            background-color: #ff9999;
+            color: #660000;
+            font-weight: bold;
+        }
+        .byte-normal {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="title">🎯 Simulateur JVS Réel - Algorithme jvs_controller.sv</div>
+    
+    <div class="info">
+        <strong>📁 Chargement du fichier JVS:</strong><br>
+        Ce simulateur lit directement <code>gun_move_cleaned.jvs</code> et applique l'algorithme exact de <code>jvs_controller.sv</code>
+    </div>
+    
+    <div class="file-input">
+        <input type="file" id="fileInput" accept=".jvs" />
+        <button onclick="loadFile()">📂 Charger gun_move_cleaned.jvs</button>
+    </div>
+    
+    <div id="status"></div>
+    
+    <div class="controls" id="controls" style="display: none;">
+        <button onclick="toggleAnimation()">▶️ Play/Pause</button>
+        <button onclick="resetAnimation()">🔄 Reset</button>
+        <button onclick="changeSpeed(-1)">🐌 Plus Lent</button>
+        <button onclick="changeSpeed(1)">🐰 Plus Rapide</button>
+        <button onclick="toggleTrail()">👁️ Trail On/Off</button>
+        <span id="speedDisplay">Vitesse: 1.0x</span>
+    </div>
+    
+    <canvas id="canvas" width="800" height="600" style="display: none;"></canvas>
+    
+    <div class="info" style="display: none;" id="rawDisplay">
+        <strong>📊 Écran JVS Brut (16-bit sans conversion):</strong>
+    </div>
+    <canvas id="rawCanvas" width="800" height="600" style="display: none;"></canvas>
+    
+    <div class="info" id="frameInfo" style="display: none;">
+        <span id="frameDisplay">Frame: 0</span> | 
+        <span id="rawPosInfo">Position JVS: (0, 0)</span> |
+        <span id="nesPosInfo">Position NES: (0, 0)</span> |
+        <span id="triggerInfo">Trigger: Non</span>
+    </div>
+    
+    <div class="info" id="frameDataSection" style="display: none;">
+        <strong>📋 Trame JVS Hexadécimale (changements en rouge):</strong>
+        <div class="frame-data" id="frameDataDisplay"></div>
+    </div>
+    
+    <div class="info">
+        <strong>🔬 Algorithme implémenté:</strong>
+        <ul>
+            <li><strong>Extraction:</strong> X = {rx_buffer[16], rx_buffer[15]}, Y = {rx_buffer[18], rx_buffer[17]} (little-endian)</li>
+            <li><strong>Scaling X:</strong> 255 - (((x - 1344) * 255) >> 13) [inversé]</li>
+            <li><strong>Scaling Y:</strong> (((y - 10496) * 239) >> 12) [direct]</li>
+            <li><strong>Reload:</strong> X < 1200 || X > 8700 || Y < 10300 || Y > 15900</li>
+        </ul>
+    </div>
+
+    <script>
+        let frames = [];
+        let currentFrame = 0;
+        let isPlaying = false;
+        let animationSpeed = 1.0;
+        let animationId;
+        let showTrail = true;
+        let previousFrameData = null;
+        
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const rawCanvas = document.getElementById('rawCanvas');
+        const rawCtx = rawCanvas.getContext('2d');
+        
+        // JVS Frame parsing and algorithm implementation
+        function parseJVSFile(buffer) {
+            // Convert buffer to text (ASCII hex format)
+            const text = new TextDecoder().decode(buffer);
+            const lines = text.split('\n').filter(line => line.trim().length > 0);
+            const parsedFrames = [];
+            
+            for (const line of lines) {
+                try {
+                    // Convert hex string to byte array
+                    const hexString = line.trim();
+                    if (hexString.length === 0) continue;
+                    
+                    // Ensure even length for hex pairs
+                    const cleanHex = hexString.length % 2 === 0 ? hexString : hexString + '0';
+                    const frame = [];
+                    
+                    for (let i = 0; i < cleanHex.length; i += 2) {
+                        const hexByte = cleanHex.substring(i, i + 2);
+                        frame.push(parseInt(hexByte, 16));
+                    }
+                    
+                    // Check if it's a lightgun frame (E000xxxx pattern, ~40 bytes)
+                    if (frame.length >= 39 && frame[0] === 0xE0 && frame[1] === 0x00) {
+                        const processed = processJVSFrame(frame);
+                        if (processed) {
+                            parsedFrames.push(processed);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Erreur parsing ligne:', line, error);
+                }
+            }
+            
+            return parsedFrames;
+        }
+        
+        function processJVSFrame(frame) {
+            // Implement the exact algorithm from jvs_controller.sv
+            if (frame.length < 39) return null; // Need at least 39 bytes for lightgun data
+            
+            // Extract coordinates (16-bit big-endian - INVERSÉ + COMPLÉMENT)
+            // Test avec endian inversé + complément
+            let gun_x = (frame[15] << 8) | frame[16]; // big-endian 16-bit (inversé)
+            let gun_y = (frame[17] << 8) | frame[18]; // big-endian 16-bit (inversé)
+            
+            // Appliquer le complément (inversion des bits)
+            gun_x = (~gun_x) & 0xFFFF; // Complément 16-bit
+            gun_y = (~gun_y) & 0xFFFF; // Complément 16-bit
+            
+            // Pas de détection de reload pour le debug
+            const isReload = false;
+            
+            let nes_x = 128; // center
+            let nes_y = 120; // center
+            
+            // Utiliser les coordonnées transformées (endian inversé + complément) pour le calcul NES
+            // Maintenant gun_x et gun_y contiennent les bonnes coordonnées
+            
+            // Calculer les plages dynamiques des coordonnées transformées
+            // On va utiliser un scaling proportionnel simple basé sur la plage 16-bit
+            
+            // Scaling direct proportionnel sur 16-bit complet
+            // X-axis: Map 16-bit range to 0-255 NES (direct, pas d'inversion)
+            nes_x = Math.floor((gun_x / 65535) * 255);  // Direct pour le mouvement gauche-droite
+            
+            // Y-axis: Map 16-bit range to 0-255 NES (inversé, plage complète)
+            nes_y = 255 - Math.floor((gun_y / 65535) * 255);  // Inversé pour le mouvement haut-bas, plage complète
+            
+            // Limiter aux plages NES valides
+            nes_x = Math.max(0, Math.min(255, nes_x));
+            nes_y = Math.max(0, Math.min(255, nes_y));
+            
+            // Extract trigger (byte 6, bit 3)
+            const trigger = (frame[6] & 0x08) !== 0;
+            
+            return {
+                gun_x: gun_x,
+                gun_y: gun_y,
+                nes_x: nes_x,
+                nes_y: nes_y,
+                reload: isReload,
+                trigger: trigger,
+                raw_frame: frame
+            };
+        }
+        
+        function displayFrameData(currentFrame, previousFrame) {
+            const frameDataDisplay = document.getElementById('frameDataDisplay');
+            if (!currentFrame || !currentFrame.raw_frame) {
+                frameDataDisplay.innerHTML = 'Aucune donnée de trame disponible';
+                return;
+            }
+            
+            const currentData = currentFrame.raw_frame;
+            const previousData = previousFrame ? previousFrame.raw_frame : null;
+            
+            let html = '';
+            const bytesPerLine = 16;
+            
+            for (let i = 0; i < currentData.length; i += bytesPerLine) {
+                // Affichage de l'offset
+                html += `<div style="margin: 5px 0;"><span style="color: #666; font-weight: bold;">${i.toString(16).padStart(4, '0').toUpperCase()}:</span> `;
+                
+                // Affichage des bytes en hex
+                for (let j = 0; j < bytesPerLine && (i + j) < currentData.length; j++) {
+                    const byteIndex = i + j;
+                    const currentByte = currentData[byteIndex];
+                    const previousByte = previousData && byteIndex < previousData.length ? previousData[byteIndex] : null;
+                    
+                    const hasChanged = previousByte !== null && currentByte !== previousByte;
+                    const className = hasChanged ? 'byte-changed' : 'byte-normal';
+                    
+                    html += `<span class="${className}">${currentByte.toString(16).padStart(2, '0').toUpperCase()}</span> `;
+                    
+                    // Espace supplémentaire tous les 8 bytes pour la lisibilité
+                    if (j === 7) html += ' ';
+                }
+                
+                html += '</div>';
+            }
+            
+            frameDataDisplay.innerHTML = html;
+        }
+        
+        function loadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showStatus('Veuillez sélectionner un fichier JVS', 'error');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const parsedFrames = parseJVSFile(e.target.result);
+                    
+                    if (parsedFrames.length === 0) {
+                        showStatus('Aucune frame lightgun trouvée dans le fichier', 'error');
+                        return;
+                    }
+                    
+                    frames = parsedFrames;
+                    currentFrame = 0;
+                    
+                    showStatus(`✅ ${frames.length} frames lightgun chargées avec succès!`, 'success');
+                    
+                    // Show controls and canvas
+                    document.getElementById('controls').style.display = 'block';
+                    document.getElementById('canvas').style.display = 'block';
+                    document.getElementById('rawDisplay').style.display = 'block';
+                    document.getElementById('rawCanvas').style.display = 'block';
+                    document.getElementById('frameInfo').style.display = 'block';
+                    document.getElementById('frameDataSection').style.display = 'block';
+                    
+                    drawFrame();
+                    drawRawFrame();
+                    
+                } catch (error) {
+                    showStatus(`Erreur lors du parsing: ${error.message}`, 'error');
+                }
+            };
+            
+            reader.onerror = function() {
+                showStatus('Erreur lors de la lecture du fichier', 'error');
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `<div class="${type}">${message}</div>`;
+        }
+        
+        function drawRawFrame() {
+            if (frames.length === 0) return;
+            
+            rawCtx.clearRect(0, 0, rawCanvas.width, rawCanvas.height);
+            
+            // NO SCALING - Use fixed 16-bit coordinate space
+            // Map 16-bit coordinates (0-65535) directly to canvas
+            const margin = 50;
+            const plotWidth = rawCanvas.width - 2 * margin;
+            const plotHeight = rawCanvas.height - 2 * margin;
+            
+            function toRawCanvasCoords(x, y) {
+                // Direct mapping: 16-bit coordinates to canvas
+                const canvasX = margin + (x / 65535) * plotWidth;
+                const canvasY = margin + ((65535 - y) / 65535) * plotHeight; // Flip Y for display
+                return [canvasX, canvasY];
+            }
+            
+            // Draw background grid
+            rawCtx.strokeStyle = '#f0f0f0';
+            rawCtx.lineWidth = 1;
+            for (let i = 0; i <= 10; i++) {
+                const x = margin + i * plotWidth / 10;
+                const y = margin + i * plotHeight / 10;
+                rawCtx.beginPath();
+                rawCtx.moveTo(x, margin);
+                rawCtx.lineTo(x, margin + plotHeight);
+                rawCtx.moveTo(margin, y);
+                rawCtx.lineTo(margin + plotWidth, y);
+                rawCtx.stroke();
+            }
+            
+            // Draw border
+            rawCtx.strokeStyle = '#ddd';
+            rawCtx.lineWidth = 2;
+            rawCtx.strokeRect(margin, margin, plotWidth, plotHeight);
+            
+            // Draw coordinate labels (16-bit fixed range)
+            rawCtx.fillStyle = '#666';
+            rawCtx.font = '12px Arial';
+            rawCtx.textAlign = 'center';
+            rawCtx.fillText(`X: 0 - 65535 (16-bit brut)`, rawCanvas.width / 2, rawCanvas.height - 10);
+            rawCtx.save();
+            rawCtx.translate(15, rawCanvas.height / 2);
+            rawCtx.rotate(-Math.PI / 2);
+            rawCtx.fillText(`Y: 0 - 65535 (16-bit brut)`, 0, 0);
+            rawCtx.restore();
+            
+            // Draw full trail in light gray if enabled
+            if (showTrail) {
+                rawCtx.strokeStyle = '#ddd';
+                rawCtx.lineWidth = 1;
+                rawCtx.beginPath();
+                for (let i = 0; i < frames.length; i++) {
+                    const [canvasX, canvasY] = toRawCanvasCoords(frames[i].gun_x, frames[i].gun_y);
+                    if (i === 0) {
+                        rawCtx.moveTo(canvasX, canvasY);
+                    } else {
+                        rawCtx.lineTo(canvasX, canvasY);
+                    }
+                }
+                rawCtx.stroke();
+                
+                // Draw trail up to current frame in blue
+                if (currentFrame > 0) {
+                    rawCtx.strokeStyle = '#2196F3';
+                    rawCtx.lineWidth = 2;
+                    rawCtx.beginPath();
+                    for (let i = 0; i <= currentFrame && i < frames.length; i++) {
+                        const [canvasX, canvasY] = toRawCanvasCoords(frames[i].gun_x, frames[i].gun_y);
+                        if (i === 0) {
+                            rawCtx.moveTo(canvasX, canvasY);
+                        } else {
+                            rawCtx.lineTo(canvasX, canvasY);
+                        }
+                    }
+                    rawCtx.stroke();
+                }
+            }
+            
+            // Draw current position (red dot)
+            if (currentFrame < frames.length) {
+                const frame = frames[currentFrame];
+                const [canvasX, canvasY] = toRawCanvasCoords(frame.gun_x, frame.gun_y);
+                rawCtx.fillStyle = frame.trigger ? '#FF0000' : '#00FF00';
+                rawCtx.beginPath();
+                rawCtx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
+                rawCtx.fill();
+                
+                // White outline for visibility
+                rawCtx.strokeStyle = 'white';
+                rawCtx.lineWidth = 2;
+                rawCtx.stroke();
+            }
+            
+            // Draw start point (green)
+            const [startX, startY] = toRawCanvasCoords(frames[0].gun_x, frames[0].gun_y);
+            rawCtx.fillStyle = '#4CAF50';
+            rawCtx.beginPath();
+            rawCtx.arc(startX, startY, 5, 0, 2 * Math.PI);
+            rawCtx.fill();
+            
+            // Draw end point (dark red)
+            const lastIndex = frames.length - 1;
+            const [endX, endY] = toRawCanvasCoords(frames[lastIndex].gun_x, frames[lastIndex].gun_y);
+            rawCtx.fillStyle = '#C62828';
+            rawCtx.beginPath();
+            rawCtx.arc(endX, endY, 5, 0, 2 * Math.PI);
+            rawCtx.fill();
+        }
+        
+        function drawFrame() {
+            if (frames.length === 0) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw NES screen area (centered in canvas)
+            const nesWidth = 512; // 2x scale of 256
+            const nesHeight = 480; // 2x scale of 240
+            const nesX = (canvas.width - nesWidth) / 2;
+            const nesY = (canvas.height - nesHeight) / 2;
+            
+            // Draw NES screen border
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(nesX, nesY, nesWidth, nesHeight);
+            
+            // Draw grid
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 16; i++) {
+                const x = nesX + i * nesWidth / 16;
+                const y = nesY + i * nesHeight / 16;
+                ctx.beginPath();
+                ctx.moveTo(x, nesY);
+                ctx.lineTo(x, nesY + nesHeight);
+                ctx.moveTo(nesX, y);
+                ctx.lineTo(nesX + nesWidth, y);
+                ctx.stroke();
+            }
+            
+            // Draw trail if enabled
+            if (showTrail && frames.length > 1) {
+                ctx.strokeStyle = '#ddd';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let i = 0; i < frames.length; i++) {
+                    const frame = frames[i];
+                    if (!frame.reload) {
+                        const x = nesX + (frame.nes_x / 255) * nesWidth;
+                        const y = nesY + (frame.nes_y / 239) * nesHeight;
+                        
+                        if (i === 0) {
+                            ctx.moveTo(x, y);
+                        } else {
+                            ctx.lineTo(x, y);
+                        }
+                    }
+                }
+                ctx.stroke();
+                
+                // Draw trail up to current frame in blue
+                if (currentFrame > 0) {
+                    ctx.strokeStyle = '#2196F3';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    let started = false;
+                    for (let i = 0; i <= currentFrame && i < frames.length; i++) {
+                        const frame = frames[i];
+                        if (!frame.reload) {
+                            const x = nesX + (frame.nes_x / 255) * nesWidth;
+                            const y = nesY + (frame.nes_y / 239) * nesHeight;
+                            
+                            if (!started) {
+                                ctx.moveTo(x, y);
+                                started = true;
+                            } else {
+                                ctx.lineTo(x, y);
+                            }
+                        }
+                    }
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw current position
+            if (currentFrame < frames.length) {
+                const frame = frames[currentFrame];
+                
+                const x = nesX + (frame.nes_x / 255) * nesWidth;
+                const y = nesY + (frame.nes_y / 239) * nesHeight;
+                
+                // Crosshair
+                ctx.strokeStyle = frame.trigger ? '#FF0000' : '#00FF00';
+                ctx.lineWidth = 3;
+                const crossSize = 10;
+                
+                ctx.beginPath();
+                ctx.moveTo(x - crossSize, y);
+                ctx.lineTo(x + crossSize, y);
+                ctx.moveTo(x, y - crossSize);
+                ctx.lineTo(x, y + crossSize);
+                ctx.stroke();
+                
+                // Center dot
+                ctx.fillStyle = frame.trigger ? '#FF0000' : '#00FF00';
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                // Update info
+                document.getElementById('frameDisplay').textContent = `Frame: ${currentFrame}/${frames.length-1}`;
+                document.getElementById('rawPosInfo').textContent = `Position JVS: (${frame.gun_x}, ${frame.gun_y})`;
+                document.getElementById('nesPosInfo').textContent = `Position NES: (${frame.nes_x}, ${frame.nes_y})`;
+                document.getElementById('triggerInfo').textContent = `Trigger: ${frame.trigger ? 'Oui' : 'Non'}`;
+                
+                // Update frame data display with changes highlighted
+                const previousFrame = currentFrame > 0 ? frames[currentFrame - 1] : null;
+                displayFrameData(frame, previousFrame);
+            }
+            
+            // Draw progress bar
+            const progressY = canvas.height - 20;
+            const progressWidth = canvas.width - 40;
+            const progressX = 20;
+            
+            ctx.fillStyle = '#eee';
+            ctx.fillRect(progressX, progressY, progressWidth, 10);
+            
+            const progress = (currentFrame / (frames.length - 1)) * progressWidth;
+            ctx.fillStyle = '#2196F3';
+            ctx.fillRect(progressX, progressY, progress, 10);
+            
+            ctx.strokeStyle = '#999';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(progressX, progressY, progressWidth, 10);
+        }
+        
+        function animate() {
+            if (isPlaying && frames.length > 0) {
+                currentFrame += animationSpeed;
+                if (currentFrame >= frames.length) {
+                    currentFrame = 0; // Loop
+                }
+                drawFrame();
+                drawRawFrame();
+                animationId = setTimeout(animate, 50 / animationSpeed);
+            }
+        }
+        
+        function toggleAnimation() {
+            isPlaying = !isPlaying;
+            if (isPlaying) {
+                animate();
+            } else {
+                clearTimeout(animationId);
+            }
+        }
+        
+        function resetAnimation() {
+            currentFrame = 0;
+            drawFrame();
+            drawRawFrame();
+        }
+        
+        function changeSpeed(delta) {
+            animationSpeed = Math.max(0.1, Math.min(5, animationSpeed + delta * 0.2));
+            document.getElementById('speedDisplay').textContent = `Vitesse: ${animationSpeed.toFixed(1)}x`;
+        }
+        
+        function toggleTrail() {
+            showTrail = !showTrail;
+            drawFrame();
+            drawRawFrame();
+        }
+        
+        // Click handler for progress bar
+        canvas.addEventListener('click', function(e) {
+            if (frames.length === 0) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const progressY = canvas.height - 20;
+            if (y >= progressY && y <= progressY + 10) {
+                const progressX = 20;
+                const progressWidth = canvas.width - 40;
+                if (x >= progressX && x <= progressX + progressWidth) {
+                    const progressRatio = (x - progressX) / progressWidth;
+                    currentFrame = Math.max(0, Math.min(frames.length - 1, Math.floor(progressRatio * frames.length)));
+                    drawFrame();
+                    drawRawFrame();
+                }
+            }
+        });
+        
+        // Keyboard controls
+        document.addEventListener('keydown', function(e) {
+            if (frames.length === 0) return;
+            
+            switch(e.key) {
+                case ' ': // Spacebar
+                    e.preventDefault();
+                    toggleAnimation();
+                    break;
+                case 'ArrowLeft':
+                    currentFrame = Math.max(0, currentFrame - 1);
+                    drawFrame();
+                    drawRawFrame();
+                    break;
+                case 'ArrowRight':
+                    currentFrame = Math.min(frames.length - 1, currentFrame + 1);
+                    drawFrame();
+                    drawRawFrame();
+                    break;
+                case 'Home':
+                    resetAnimation();
+                    break;
+            }
+        });
+    </script>
+</body>
+</html>

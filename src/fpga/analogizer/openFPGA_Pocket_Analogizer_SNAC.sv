@@ -114,7 +114,14 @@ module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
     // Snac gun register
     output reg snac_gun_trigger,
     output reg [11:0] snac_gun_x,
-    output reg [11:0] snac_gun_y
+    output reg [11:0] snac_gun_y,
+    
+    // GPIO output value for OSD display
+    output wire [7:0] gpio_output_value,
+    
+    // SNAC IO signals for OSD display
+    output wire snac_io3,
+    output wire snac_in7
 ); 
     //
     logic SNAC_OUT1 ; //cart_tran_bank1[6]                                           D-
@@ -127,6 +134,18 @@ module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
     logic SNAC_IO6_A ;//Conf.A: pin31(in),                Conf.B: pin31(out)         TX-
     logic SNAC_IO6_B ;//Conf.A: pin31(in),                Conf.B: pin31(out)         TX-
     logic SNAC_IN7 ;   //cart_tran_bank0[5]                                          TX+
+    
+    // GPIO control signals for recoil
+    logic [7:0] gpio_output_value_reg;
+    logic gun_recoil_active;
+    logic [31:0] recoil_timer;
+    logic snac_gun_trigger_prev;
+    localparam logic [31:0] RECOIL_PULSE_DURATION = MASTER_CLK_FREQ; // 1s pulse duration
+    
+    // Assign output wires
+    assign gpio_output_value = gpio_output_value_reg;
+    assign snac_io3 = SNAC_IO3_A;
+    assign snac_in7 = SNAC_IN7;
     
     //calculate step sizes for fract clock enables
     // localparam pce_compat_polling_freq    =  20_000; //  20_000 / 5 =   4K samples/sec PCE
@@ -494,7 +513,10 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
         .jvs_data_ready(jvs_data_ready),
         .jvs_nodes(jvs_nodes),
         .node_name_rd_data(node_name_rd_data),
-        .node_name_rd_addr(node_name_rd_addr)
+        .node_name_rd_addr(node_name_rd_addr),
+        
+        // GPIO control
+        .gpio_output_value(gpio_output_value_reg)
     );
 
     always @(*) begin
@@ -588,5 +610,33 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
         endcase
     end
 
+    // Gun recoil control logic
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            gun_recoil_active <= 1'b0;
+            recoil_timer <= 32'h0;
+            snac_gun_trigger_prev <= 1'b0;
+            gpio_output_value_reg <= 8'h00;
+        end else begin
+            snac_gun_trigger_prev <= snac_gun_trigger;
+            
+            // Detect rising edge of gun trigger
+            if (!snac_gun_trigger_prev && snac_gun_trigger) begin
+                gun_recoil_active <= 1'b1;
+                recoil_timer <= 32'h0;
+                gpio_output_value_reg <= 8'h80; // Activate recoil
+            end
+            
+            // Manage recoil timer
+            if (gun_recoil_active) begin
+                if (recoil_timer < RECOIL_PULSE_DURATION) begin
+                    recoil_timer <= recoil_timer + 1;
+                end else begin
+                    gun_recoil_active <= 1'b0;
+                    gpio_output_value_reg <= 8'h00; // Deactivate recoil
+                end
+            end
+        end
+    end
     
 endmodule

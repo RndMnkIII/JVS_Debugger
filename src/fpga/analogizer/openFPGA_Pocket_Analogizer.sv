@@ -272,6 +272,8 @@ assign analogizer_osd_out        = analogizer_osd_out2;
     wire snac_gun_trigger;
     wire [11:0] snac_gun_x;
     wire [11:0] snac_gun_y;
+    wire [7:0] gpio_output_value;
+    wire snac_io3, snac_in7;
 
 	openFPGA_Pocket_Analogizer_SNAC #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) snac
 	(
@@ -310,7 +312,14 @@ assign analogizer_osd_out        = analogizer_osd_out2;
         // generic snac gun support
         .snac_gun_trigger(snac_gun_trigger),
         .snac_gun_x(snac_gun_x),
-        .snac_gun_y(snac_gun_y)
+        .snac_gun_y(snac_gun_y),
+        
+        // GPIO output value
+        .gpio_output_value(gpio_output_value),
+        
+        // SNAC IO signals
+        .snac_io3(snac_io3),
+        .snac_in7(snac_in7)
 	); 
 
 	//=========================================================================
@@ -920,7 +929,14 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		// Wire gun to snac module
 		.gun_trigger(snac_gun_trigger),
     	.gun_x(snac_gun_x),
-    	.gun_y(snac_gun_y)
+    	.gun_y(snac_gun_y),
+    	
+    	// Wire GPIO output value for recoil display
+    	.gpio_output_value(gpio_output_value),
+    	
+    	// Wire SNAC IO signals for display
+    	.snac_io3(snac_io3),
+    	.snac_in7(snac_in7)
    );
 
    assign OSD_out_R =OSD_R;

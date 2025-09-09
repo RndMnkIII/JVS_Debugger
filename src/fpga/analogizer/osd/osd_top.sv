@@ -42,7 +42,14 @@ module osd_top #(
     //gun interface x,y,trigger
     input logic gun_trigger,
     input logic [11:0] gun_x,
-    input logic [11:0] gun_y
+    input logic [11:0] gun_y,
+    
+    //gpio output value for recoil display
+    input logic [7:0] gpio_output_value,
+    
+    //snac io signals for display
+    input logic snac_io3,
+    input logic snac_in7
 );
 
   // RAM de caracteres compartida
@@ -179,8 +186,20 @@ module osd_top #(
             gun_trigger_d <= gun_trigger;
 
 
+            // Display GPIO output value in top-left corner
+            if (x_pixr < 80 && y_pixr < 16 && gpio_output_value != 8'h00) begin
+                {R_out, G_out, B_out} <= {8'hFF, 8'hFF, 8'h00}; // Yellow for active GPIO
+            end
+            // Display IO3 signal in top-left corner (second line)
+            else if (x_pixr < 80 && y_pixr >= 16 && y_pixr < 32 && snac_io3) begin
+                {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; // Red for IO3 active
+            end
+            // Display IN7 signal in top-left corner (third line)
+            else if (x_pixr < 80 && y_pixr >= 32 && y_pixr < 48 && snac_in7) begin
+                {R_out, G_out, B_out} <= {8'hFF, 8'h80, 8'h00}; // Orange for IN7 active
+            end
             //if((hit_x && !hit_y) || (!hit_x && hit_y)) begin //crosslines
-            if((hit_x && y_pixr == gun_yr) || (hit_y && x_pixr == gun_xr)) begin //crosshair
+            else if((hit_x && y_pixr == gun_yr) || (hit_y && x_pixr == gun_xr)) begin //crosshair
                 if(gun_trigger_d)
                     {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; //red
                 else

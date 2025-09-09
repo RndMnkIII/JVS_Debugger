@@ -569,8 +569,8 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
             
             // JVS gun mapping: extract coordinates from analog channels
             snac_gun_trigger = jvs_p1[2]; // Left direction for trigger
-            snac_gun_x = jvs_joy1[31:20]; // Gun X = Ch1(MSB) + upper part of Ch3(LSB), 12-bit
-            snac_gun_y = jvs_joy1[15:4];  // Gun Y = Ch2(MSB) + upper part of Ch4(LSB), 12-bit
+            snac_gun_x = (jvs_joy1[31:20] * 320) >> 12; // Gun X scaled to 320 pixels
+            snac_gun_y = (jvs_joy1[15:4] * 240) >> 12;  // Gun Y scaled to 240 pixels
         end
         default: begin
             SNAC_OUT1 = 1'b0;

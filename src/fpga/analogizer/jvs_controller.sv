@@ -1551,8 +1551,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                 case (current_channel)
                     4'd0: begin // Channel 1
                         if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
-                            // Channel 1: 12-bit MSBs -> X axis MSB [23:12]
-                            p1_analog_x_24bit[23:12] <= {rx_buffer[copy_read_idx],rx_buffer[copy_read_idx + 1][7:4]};
+                            p1_joy_state[31:20] <= ~{rx_buffer[copy_read_idx],rx_buffer[copy_read_idx + 1][7:4]};
                         end else begin
                             p1_joy_state[31:24] <= rx_buffer[copy_read_idx];
                             p1_joy_state[23:16] <= rx_buffer[copy_read_idx + 1];
@@ -1560,9 +1559,7 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     end
                     4'd1: begin // Channel 2
                         if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
-                            // Channel 2: 12-bit MSBs -> Y axis MSB [23:12]
-                            //p1_analog_x_24bit[11:4] <= rx_buffer[copy_read_idx];
-                            //p1_analog_x_24bit[3:0] <= rx_buffer[copy_read_idx + 1][7:4];
+                            p1_joy_state[15:4] <= {rx_buffer[copy_read_idx],rx_buffer[copy_read_idx + 1][7:4]};
                         end else begin
                             p1_joy_state[15:8] <= rx_buffer[copy_read_idx];
                             p1_joy_state[7:0] <= rx_buffer[copy_read_idx + 1];
@@ -1571,7 +1568,6 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     4'd2: begin // Channel 3
                         if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
                             // Channel 3: 12-bit MSBs -> X axis LSB [11:0]
-                            p1_analog_y_24bit[23:12] <= {rx_buffer[copy_read_idx],rx_buffer[copy_read_idx + 1][7:4]};
                         end else begin
                             p2_joy_state[31:24] <= rx_buffer[copy_read_idx];
                             p2_joy_state[23:16] <= rx_buffer[copy_read_idx + 1];
@@ -1580,8 +1576,6 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                     4'd3: begin // Channel 4
                         if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
                             // Channel 4: 12-bit MSBs -> Y axis LSB [11:0]
-                            //p1_analog_y_24bit[11:4] <= rx_buffer[copy_read_idx];
-                            //p1_analog_y_24bit[3:0] <= rx_buffer[copy_read_idx + 1][7:4];
                         end else begin
                             p2_joy_state[15:8] <= rx_buffer[copy_read_idx];
                             p2_joy_state[7:0] <= rx_buffer[copy_read_idx + 1];
@@ -1602,11 +1596,6 @@ module jvs_controller #(parameter MASTER_CLK_FREQ = 50_000_000)
                 copy_read_idx <= copy_read_idx + 2;
                 current_channel <= current_channel + 1;
                 if (current_channel + 1 >= jvs_nodes.node_analog_channels[current_device_addr - 1]) begin
-                    if (jvs_nodes.node_players[current_device_addr - 1] == 1) begin
-                        // Output: Use full 24-bit values, take most significant 16 bits
-                        p1_joy_state[31:16] <= ~p1_analog_x_24bit[23:8];
-                        p1_joy_state[15:0] <= ~p1_analog_y_24bit[23:8];
-                    end
                     rx_state <= RX_PARSE_INPUTS_ROTARY; // All channels processed, go to next function
                 end
                 // else stay in RX_PARSE_INPUTS_ANALOG_DATA for next channel

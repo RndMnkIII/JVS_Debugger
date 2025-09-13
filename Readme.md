@@ -3,6 +3,26 @@
 
 This core allows you to test communication with JVS IO devices and display their status. This is a work in progress. It requires a specific JVS SNAC adapter designed by Sébastien DUPONCHEEL connected to the Analogizer SNAC port.
 
+## Installation
+
+This project uses a git submodule for the JVS controller implementation. To properly clone the repository with all its dependencies:
+
+```bash
+# Clone the repository with submodules
+# http version
+git clone --recursive https://github.com/RndMnkIII/JVS_Debugger.git
+
+# ssh version
+git clone --recursive git@github.com:RndMnkIII/JVS_Debugger.git
+
+# OR if you already cloned without --recursive:
+git submodule update --init --recursive
+```
+
+## Building
+
+The JVS controller implementation is located in the `src/fpga/analogizer/jvs/` submodule. The Quartus project file automatically includes all necessary files from the submodule via the `jvs.qip` file.
+
 ## Relevant Pocket menu options: 
 * __Enable Analogizer: Off, On__: if you don't enable this option all functionality related to Analogizer will be disabled.
 

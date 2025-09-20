@@ -485,7 +485,7 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
     wire [15:0] jvs_screen_pos_y /* synthesis keep */;
     wire jvs_has_screen_pos /* synthesis keep */;
 
-    jvs_controller #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) jvs_inst (
+    jvs_ctrl #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) jvs_inst (
         .i_clk(i_clk),
         .i_rst(reset_on_change),
         .i_ena(jvs_ena),

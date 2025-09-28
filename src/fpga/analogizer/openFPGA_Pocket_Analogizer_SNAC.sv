@@ -109,7 +109,7 @@ module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
     output jvs_node_info_t jvs_nodes,
     //RAM interface for node names (for debug/display purposes)
     output logic [7:0] node_name_rd_data,
-    input logic [6:0] node_name_rd_addr,
+    input logic [jvs_node_info_pkg::NAME_BRAM_ADDR_BITS-1:0] node_name_rd_addr,
     
     // Snac gun register
     output reg snac_gun_trigger,
@@ -142,8 +142,8 @@ module openFPGA_Pocket_Analogizer_SNAC #(parameter MASTER_CLK_FREQ=50_000_000)
     logic snac_gun_trigger_prev;
     localparam logic [31:0] RECOIL_PULSE_DURATION = MASTER_CLK_FREQ; // 1s pulse duration
     
-    // Assign output wires
-    assign gpio_output_value = gpio_output_value_reg;
+    // Assign output wires - JVS digital output replaces GPIO output
+    assign gpio_output_value = jvs_output_digital_ch1[7:0];
     assign snac_io3 = SNAC_IO3_A;
     assign snac_in7 = SNAC_IN7;
     
@@ -468,15 +468,20 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
     .i_dat({SNAC_IN7,SNAC_IO3_A,SNAC_IO6_A,SNAC_IN4}) //data from controller
 );
 
-    //JVS game controller interface
-    wire [15:0] jvs_p1 /* synthesis keep */;
-    wire [31:0] jvs_joy1 /* synthesis keep */;
-    wire [15:0] jvs_p2 /* synthesis keep */;
-    wire [31:0] jvs_joy2 /* synthesis keep */;
-    wire [15:0] jvs_p3 /* synthesis keep */;
-    wire [31:0] jvs_joy3 /* synthesis keep */;
-    wire [15:0] jvs_p4 /* synthesis keep */;
-    wire [31:0] jvs_joy4 /* synthesis keep */;
+    //JVS game controller interface - generic API
+    wire [15:0] jvs_player1_input_switch /* synthesis keep */;
+    wire [15:0] jvs_player2_input_switch /* synthesis keep */;
+    wire [15:0] jvs_player3_input_switch /* synthesis keep */;
+    wire [15:0] jvs_player4_input_switch /* synthesis keep */;
+    wire [15:0] jvs_analog_ch1 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch2 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch3 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch4 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch5 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch6 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch7 /* synthesis keep */;
+    wire [15:0] jvs_analog_ch8 /* synthesis keep */;
+    wire [15:0] jvs_output_digital_ch1 /* synthesis keep */;
     wire JVS_UART_TX /* synthesis keep */;
     wire JVS_485_DIR /* synthesis keep */;
     
@@ -485,7 +490,7 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
     wire [15:0] jvs_screen_pos_y /* synthesis keep */;
     wire jvs_has_screen_pos /* synthesis keep */;
 
-    jvs_controller #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) jvs_inst (
+    jvs_ctrl #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) jvs_inst (
         .i_clk(i_clk),
         .i_rst(reset_on_change),
         .i_ena(jvs_ena),
@@ -493,30 +498,42 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
 
         .i_uart_rx(SNAC_IN4),
         .o_uart_tx(JVS_UART_TX),
+        .i_sense(SNAC_IN7),  // JVS SENSE line connected to SNAC IN7
         .o_rx485_dir(JVS_485_DIR),
 
-        .p1_btn_state(jvs_p1),
-        .p1_joy_state(jvs_joy1),
-        .p2_btn_state(jvs_p2),
-        .p2_joy_state(jvs_joy2),
-        .p3_btn_state(jvs_p3),
-        //.p3_joy_state(jvs_joy3),
-        .p4_btn_state(jvs_p4),
-        //.p4_joy_state(jvs_joy4),
-        
+        .player1_input_switch(jvs_player1_input_switch),
+        .player2_input_switch(jvs_player2_input_switch),
+        .player3_input_switch(jvs_player3_input_switch),
+        .player4_input_switch(jvs_player4_input_switch),
+        .analog_ch1(jvs_analog_ch1),
+        .analog_ch2(jvs_analog_ch2),
+        .analog_ch3(jvs_analog_ch3),
+        .analog_ch4(jvs_analog_ch4),
+        .analog_ch5(jvs_analog_ch5),
+        .analog_ch6(jvs_analog_ch6),
+        .analog_ch7(jvs_analog_ch7),
+        .analog_ch8(jvs_analog_ch8),
+
+        // Digital output channels
+        .output_digital_ch1(jvs_output_digital_ch1),
+
         // Screen position outputs (light gun/touch screen)
         .screen_pos_x(jvs_screen_pos_x),
         .screen_pos_y(jvs_screen_pos_y),
         .has_screen_pos(jvs_has_screen_pos),
-        
+
+        // Coin counter outputs - not used in current SNAC implementation
+        .coin_count(),  // 4-element array, left unconnected
+        .coin1(),       // Not connected
+        .coin2(),       // Not connected
+        .coin3(),       // Not connected
+        .coin4(),       // Not connected
+
         //JVS node info
         .jvs_data_ready(jvs_data_ready),
         .jvs_nodes(jvs_nodes),
         .node_name_rd_data(node_name_rd_data),
-        .node_name_rd_addr(node_name_rd_addr),
-        
-        // GPIO control
-        .gpio_output_value(gpio_output_value_reg)
+        .node_name_rd_addr(node_name_rd_addr)
     );
 
     always @(*) begin
@@ -580,19 +597,33 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
         GC_JVS: begin
             SNAC_OUT1 = JVS_UART_TX;
             SNAC_OUT2 = JVS_485_DIR;
-            p1_btn_state = jvs_p1; 
-            p1_joy_state = jvs_joy1;
-            p2_btn_state = jvs_p2;
-            p2_joy_state = jvs_joy2;
-            p3_btn_state = jvs_p3; 
-            //p3_joy_state = jvs_joy3;
-            p4_btn_state = jvs_p4;
-            //p4_joy_state = jvs_joy4;
-            
-            // JVS gun mapping: extract coordinates from analog channels
-            snac_gun_trigger = jvs_p1[2]; // Left direction for trigger
-            snac_gun_x = (jvs_joy1[31:20] * 320) >> 12; // Gun X scaled to 320 pixels
-            snac_gun_y = (jvs_joy1[15:4] * 240) >> 12;  // Gun Y scaled to 240 pixels
+            p1_btn_state = jvs_player1_input_switch;
+            p2_btn_state = jvs_player2_input_switch;
+            p3_btn_state = jvs_player3_input_switch;
+            p4_btn_state = jvs_player4_input_switch;
+
+            // Special analog mapping logic based on number of players
+            if (jvs_nodes.node_players[0] == 1) begin
+                // Single player mode (Time Crisis style)
+                // Channel 1&2: P1 joystick with inverted X and direct Y
+                p1_joy_state = {~jvs_analog_ch1, jvs_analog_ch2}; // Inverted X, direct Y
+                p2_joy_state = 32'h80808080; // Neutral position
+
+                // Channel 3&4: Screen position for light gun
+                snac_gun_x = (jvs_analog_ch3 * 320) >> 16; // Screen X from channel 3
+                snac_gun_y = (jvs_analog_ch4 * 240) >> 16; // Screen Y from channel 4
+                snac_gun_trigger = jvs_player1_input_switch[2]; // Trigger from button
+            end else begin
+                // Multi-player mode (standard mapping)
+                // Standard mapping: Ch1&2 for P1, Ch3&4 for P2
+                p1_joy_state = {jvs_analog_ch2, jvs_analog_ch1}; // P1: Y,X
+                p2_joy_state = {jvs_analog_ch4, jvs_analog_ch3}; // P2: Y,X
+
+                // Gun coordinates from P1 joystick
+                snac_gun_x = (jvs_analog_ch1 * 320) >> 16;
+                snac_gun_y = (jvs_analog_ch2 * 240) >> 16;
+                snac_gun_trigger = jvs_player1_input_switch[2];
+            end
         end
         default: begin
             SNAC_OUT1 = 1'b0;
@@ -610,30 +641,30 @@ pcengine_game_controller_multitap #(.MASTER_CLK_FREQ(MASTER_CLK_FREQ)) pcegmutit
         endcase
     end
 
-    // Gun recoil control logic
+    // Gun recoil control logic - now outputs to JVS digital channel
     always @(posedge i_clk) begin
         if (i_rst) begin
             gun_recoil_active <= 1'b0;
             recoil_timer <= 32'h0;
             snac_gun_trigger_prev <= 1'b0;
-            gpio_output_value_reg <= 8'h00;
+            jvs_output_digital_ch1 <= 16'hA000; // MSB = 0xA0 constant, LSB = 0x00 (inactive)
         end else begin
             snac_gun_trigger_prev <= snac_gun_trigger;
-            
+
             // Detect rising edge of gun trigger
             if (!snac_gun_trigger_prev && snac_gun_trigger) begin
                 gun_recoil_active <= 1'b1;
                 recoil_timer <= 32'h0;
-                gpio_output_value_reg <= 8'h80; // Activate recoil
+                jvs_output_digital_ch1 <= 16'hA080; // MSB = 0xA0 constant, LSB = 0x80 (recoil active)
             end
-            
+
             // Manage recoil timer
             if (gun_recoil_active) begin
                 if (recoil_timer < RECOIL_PULSE_DURATION) begin
                     recoil_timer <= recoil_timer + 1;
                 end else begin
                     gun_recoil_active <= 1'b0;
-                    gpio_output_value_reg <= 8'h00; // Deactivate recoil
+                    jvs_output_digital_ch1 <= 16'hA000; // MSB = 0xA0 constant, LSB = 0x00 (recoil inactive)
                 end
             end
         end

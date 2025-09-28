@@ -266,7 +266,7 @@ assign analogizer_osd_out        = analogizer_osd_out2;
     logic jvs_data_ready;
 	jvs_node_info_t jvs_nodes;
     logic [7:0] node_name_rd_data;
-    logic [6:0] node_name_rd_addr;
+    logic [7:0] node_name_rd_addr;
     
 	// generic snac gun support
     wire snac_gun_trigger;
@@ -417,7 +417,7 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 	} jvs_name_copy_state;
 
 	// Variables for BRAND/MODEL parsing
-	logic [6:0] semicolon_addr;  // Address where semicolon was found
+	logic [7:0] semicolon_addr;  // Address where semicolon was found
 	logic semicolon_found;       // Flag indicating semicolon was found
 
 	// Nibble (0..15) a ASCII ('0'..'9','A'..'F' o 'a'..'f')
@@ -445,17 +445,17 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 		end else if (do_proc) begin
 			case (jvs_name_copy_state)
 				INIT_JVS_STR: begin
-					node_name_rd_addr <= 7'h0; //set initial read address
+					node_name_rd_addr <= 0; // Start at node 0 * NODE_NAME_SIZE = 0
 					next_OSD_wr_addr <= JVS_NODE_BRAND_POS;  // Start with BRAND
 					semicolon_found <= 1'b0;  // Reset semicolon flag
-					semicolon_addr <= 7'h0;   // Reset semicolon address
+					semicolon_addr <= 0;   // Reset semicolon address using proper width
 					OSD_wr_en <= 1'b0;	//disable write
 					jvs_name_copy_state <=READ_JVS_STR;
 				end
 				READ_JVS_STR: begin
 					OSD_wr_en <= 1'b0;	//disable write
 					STR_byte <= node_name_rd_data;
-					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+					node_name_rd_addr <= node_name_rd_addr + 1'b1; //increment read address for next byte
 					jvs_name_copy_state <= WRITE_BRAND_STR;
 				end
 
@@ -467,7 +467,7 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 					if((STR_byte != 8'h00) && (next_OSD_wr_addr < JVS_NODE_NAME_LAST1_POS)) begin
 						if (STR_byte == 8'h3B) begin // Semicolon found (';' = 0x3B)
 							semicolon_found <= 1'b1;
-							semicolon_addr <= node_name_rd_addr - 7'd1; // Save position after semicolon
+							semicolon_addr <= node_name_rd_addr - 1'b1; // Save position after semicolon
 							jvs_name_copy_state <= INIT_MODEL_STR;
 						end else begin
 							//write brand character
@@ -493,7 +493,7 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 				READ_MODEL_STR: begin
 					OSD_wr_en <= 1'b0;	//disable write
 					STR_byte <= node_name_rd_data;
-					node_name_rd_addr <= node_name_rd_addr + 7'd1; //increment read address for next byte
+					node_name_rd_addr <= node_name_rd_addr + 1'b1; //increment read address for next byte
 					jvs_name_copy_state <= WRITE_MODEL_STR;
 				end
 
@@ -876,9 +876,9 @@ assign analogizer_osd_out        = analogizer_osd_out2;
 				end
 
 				EOS: begin
-						OSD_wr_addr <= 11'd0;		
+						OSD_wr_addr <= 11'd0;
 						OSD_wr_data <= 8'd0;
-						node_name_rd_addr <= 7'h0;
+						node_name_rd_addr <= 0;
 						SNAC_ROM_addr <= 10'd0;
 						btn_cnt <= 6'd0;
 						do_proc <= 1'b0;

@@ -13,6 +13,70 @@
                 ],
                 "address": "0xF7000000",
                 "nonvolatile": false
+            },
+            {
+                "name": "JVS bus dump",
+                "id": 20,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "filename": "jvs_dump.bin",
+                "extensions": [
+                    "bin"
+                ],
+                "address": "0x40000000",
+                "nonvolatile": false
+            },
+            {
+                "name": "JVS init capture",
+                "id": 21,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "filename": "jvs_init.bin",
+                "extensions": [
+                    "bin"
+                ],
+                "address": "0x40000000",
+                "nonvolatile": false
+            },
+            {
+                "name": "JVS sniffer capture",
+                "id": 22,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "filename": "jvs_sniff.bin",
+                "extensions": [
+                    "bin"
+                ],
+                "address": "0x40000000",
+                "nonvolatile": false
+            },
+            {
+                "name": "JVS sniffer init capture",
+                "id": 23,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "filename": "jvs_sniff_init.bin",
+                "extensions": [
+                    "bin"
+                ],
+                "address": "0x40000000",
+                "nonvolatile": false
+            },
+            {
+                "name": "JVS Profile",
+                "id": 24,
+                "required": false,
+                "filename": "jvs_vendor.bin",
+                "parameters": "0x3",
+                "extensions": [
+                    "bin"
+                ],
+                "size_maximum": "0x100",
+                "address": "0x50000000"
             }
         ]
     }

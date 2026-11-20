@@ -2,7 +2,7 @@
     "core": {
         "magic": "APF_VER_1",
         "metadata": {
-            "platform_ids": ["jvsdebugger","analogizer"],
+            "platform_ids": ["jvs","analogizer"],
             "shortname": "JVS_Debugger",
             "description": "Analogizer JVS Debugger Tool",
             "author": "RndMnkIII",

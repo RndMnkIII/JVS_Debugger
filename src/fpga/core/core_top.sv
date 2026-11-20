@@ -482,6 +482,120 @@ module core_top
     //! ////////////////////////////////////////////////////////////////////////
 
     //!-------------------------------------------------------------------------
+    //! JVS bus dump: Pocket Start button writes the capture buffer to jvs_dump.bin
+    //! (data slot 20) with a target "data slot write" command, then restarts it
+    //!-------------------------------------------------------------------------
+    localparam [15:0] JVS_DUMP_SLOT_ID     = 16'd20;   // jvs_dump.bin: Start button
+    localparam [15:0] JVS_INIT_SLOT_ID     = 16'd21;   // jvs_init.bin: first capture (init), auto saved
+    localparam [15:0] JVS_SNIFF_SLOT_ID    = 16'd22;   // jvs_sniff.bin: Start button in sniffer mode
+    localparam [15:0] JVS_SNIFF_INIT_ID    = 16'd23;   // jvs_sniff_init.bin: first sniffer capture, auto saved
+    reg         jvs_sniff_auto_done = 1'b0; // sniffer init capture saved (cleared outside sniffer mode)
+    wire        jvs_sniffer_mode;          // clk_sys domain
+    reg   [1:0] jvs_sniffer_s;
+    reg         jvs_dump_sniff = 1'b0;     // current save is a sniffer capture
+    localparam [31:0] JVS_DUMP_BRIDGE_ADDR = 32'h40000000;
+    wire [31:0] jvs_dump_rd_data;
+    wire [15:0] jvs_dump_entries;          // clk_sys domain, stable while held
+    reg         jvs_dump_hold        = 1'b0;
+    reg         jvs_dump_restart_tgl = 1'b0;
+    reg  [15:0] jvs_dump_entries_s1, jvs_dump_entries_s2;
+    wire        jvs_dump_full;             // clk_sys domain
+    reg   [1:0] jvs_dump_full_s;
+    reg         jvs_dump_auto      = 1'b0; // current save was triggered by "buffer full"
+    reg         jvs_dump_auto_done = 1'b0; // init capture saved: the logger then runs as a ring buffer
+    reg   [2:0] jvs_dump_btn_s;
+    reg   [1:0] jvs_dump_state = 2'd0;
+    reg   [7:0] jvs_dump_wait;
+    reg  [27:0] jvs_dump_timer;            // guard timeout / result display time (clk_74a)
+    // Status for the OSD: 0 = capture, 1 = saving, 2 = saved, 3 = error (code in jvs_dump_err)
+    reg   [1:0] jvs_dump_status = 2'd0;
+    reg   [2:0] jvs_dump_err    = 3'd0;    // APF result code, 7 = no answer from the Pocket
+    localparam [27:0] JVS_DUMP_TIMEOUT = 28'd148_500_000;  // 2 s at 74.25 MHz
+    localparam [27:0] JVS_DUMP_SHOW    = 28'd222_750_000;  // result shown 3 s
+    initial begin
+        target_dataslot_read     = 1'b0;
+        target_dataslot_write    = 1'b0;
+        target_dataslot_getfile  = 1'b0;
+        target_dataslot_openfile = 1'b0;
+    end
+    always @(posedge clk_74a) begin
+        jvs_dump_entries_s1 <= jvs_dump_entries;
+        jvs_dump_entries_s2 <= jvs_dump_entries_s1;
+        jvs_dump_btn_s      <= {jvs_dump_btn_s[1:0], cont1_key[15]};  // Start button
+        jvs_dump_full_s     <= {jvs_dump_full_s[0], jvs_dump_full};
+        jvs_sniffer_s       <= {jvs_sniffer_s[0], jvs_sniffer_mode};
+        if (!jvs_sniffer_s[1] && jvs_dump_state == 2'd0) jvs_sniff_auto_done <= 1'b0;  // new sniffer session: new init capture
+        case (jvs_dump_state)
+            2'd0: begin
+                      // result display time
+                      if (jvs_dump_status >= 2'd2) begin
+                          if (jvs_dump_timer != 28'd0) jvs_dump_timer <= jvs_dump_timer - 28'd1;
+                          else                         jvs_dump_status <= 2'd0;
+                      end
+                      // B: save the current capture then restart it.
+                      // Buffer full: save it automatically once, the capture stays stopped
+                      // (the file keeps the init sequence instead of being overwritten).
+                      if (jvs_dump_btn_s[2:1] == 2'b01 ||
+                          (jvs_dump_full_s[1] && !(jvs_sniffer_s[1] ? jvs_sniff_auto_done : jvs_dump_auto_done))) begin
+                          jvs_dump_auto   <= !(jvs_dump_btn_s[2:1] == 2'b01);
+                          jvs_dump_sniff  <= jvs_sniffer_s[1];
+                          jvs_dump_hold   <= 1'b1;                  // freeze the capture
+                          jvs_dump_wait   <= 8'd0;
+                          jvs_dump_status <= 2'd1;                  // SAVING
+                          jvs_dump_state  <= 2'd1;
+                      end
+                  end
+            2'd1: begin                                             // let hold and count settle
+                      jvs_dump_wait <= jvs_dump_wait + 8'd1;
+                      if (jvs_dump_wait == 8'hFF) begin
+                          target_dataslot_id         <= jvs_dump_sniff ? (jvs_dump_auto ? JVS_SNIFF_INIT_ID : JVS_SNIFF_SLOT_ID)
+                                                                       : (jvs_dump_auto ? JVS_INIT_SLOT_ID  : JVS_DUMP_SLOT_ID);
+                          target_dataslot_slotoffset <= 32'd0;
+                          target_dataslot_bridgeaddr <= JVS_DUMP_BRIDGE_ADDR;
+                          target_dataslot_length     <= (32'd8 + {16'd0, jvs_dump_entries_s2} * 32'd2) << 2;   // 8-word header
+                          target_dataslot_write      <= 1'b1;
+                          jvs_dump_timer             <= JVS_DUMP_TIMEOUT;
+                          jvs_dump_state             <= 2'd2;
+                      end
+                  end
+            2'd2: begin                                             // wait for the command start
+                      jvs_dump_timer <= jvs_dump_timer - 28'd1;
+                      if (target_dataslot_ack) begin
+                          target_dataslot_write <= 1'b0;
+                          jvs_dump_timer        <= JVS_DUMP_TIMEOUT;
+                          jvs_dump_state        <= 2'd3;
+                      end else if (jvs_dump_timer == 28'd0) begin
+                          target_dataslot_write <= 1'b0;
+                          jvs_dump_err          <= 3'd7;            // no answer from the Pocket
+                          jvs_dump_status       <= 2'd3;
+                          jvs_dump_timer        <= JVS_DUMP_SHOW;
+                          jvs_dump_hold         <= 1'b0;
+                          if (jvs_dump_auto) begin if (jvs_dump_sniff) jvs_sniff_auto_done <= 1'b1; else jvs_dump_auto_done <= 1'b1; end // no auto retry loop
+                          jvs_dump_state        <= 2'd0;
+                      end
+                  end
+            2'd3: begin                                             // wait for the result
+                      jvs_dump_timer <= jvs_dump_timer - 28'd1;
+                      if (target_dataslot_done || jvs_dump_timer == 28'd0) begin
+                          // error code, or for a successful save: 0 = jvs_dump.bin, 1 = jvs_init.bin,
+                          // 2 = jvs_sniff.bin, 3 = jvs_sniff_init.bin
+                          jvs_dump_err         <= !target_dataslot_done ? 3'd7 :
+                                                  (target_dataslot_err != 3'd0) ? target_dataslot_err :
+                                                  {1'b0, jvs_dump_sniff, jvs_dump_auto};
+                          jvs_dump_status      <= (target_dataslot_done && target_dataslot_err == 3'd0) ? 2'd2 : 2'd3;
+                          jvs_dump_timer       <= JVS_DUMP_SHOW;
+                          jvs_dump_hold        <= 1'b0;
+                          // Init capture saved in its own file: from now on the logger keeps the
+                          // last seconds (ring buffer) for the Start button. Start restarts the capture too.
+                          if (jvs_dump_auto) begin if (jvs_dump_sniff) jvs_sniff_auto_done <= 1'b1; else jvs_dump_auto_done <= 1'b1; end
+                          jvs_dump_restart_tgl <= ~jvs_dump_restart_tgl;   // start a new capture
+                          jvs_dump_state       <= 2'd0;
+                      end
+                  end
+        endcase
+    end
+
+    //!-------------------------------------------------------------------------
     //! APF Bridge Read Data
     //!-------------------------------------------------------------------------
     wire [31:0] int_bridge_rd_data;
@@ -492,6 +606,7 @@ module core_top
             32'hF2000000:                                begin bridge_rd_data <= int_bridge_rd_data;        end // Modifiers (Analogizer Enable option)
             32'hF0000000:                                begin bridge_rd_data <= int_bridge_rd_data;        end // Reset
             {ADDRESS_ANALOGIZER_CONFIG,24'h0}:           begin bridge_rd_data <= analogizer_bridge_rd_data; end // analogizer.bin configuration file
+            32'h400xxxxx:                                begin bridge_rd_data <= jvs_dump_rd_data;          end // jvs_dump.bin (JVS bus capture, 128 KB)
             //32'hFC000000:                                begin bridge_rd_data <= int_bridge_rd_data;        end // Inputs
             default:                                     begin bridge_rd_data <= 32'h0;                     end
         endcase
@@ -751,7 +866,25 @@ video_sync_gen_320x240_6mhz_pixclk_en vidsync(
         .analogizer_video_type_out(analogizer_video_type),
         .SC_fx_out(),
         .pocket_blank_screen_out(pocket_blank_screen),
-        .analogizer_osd_out(),
+        .analogizer_out(),
+
+        //Pocket controller (D-pad left/right selects the JVS node shown in the OSD)
+        .pocket_cont1_key(cont1_key),
+
+        //JVS bus dump (jvs_dump.bin)
+        // The bridge samples the read data one address later than our registered BRAM
+        // output (the file held word n+1 at position n): compensate the word address
+        .jvs_dump_rd_addr(bridge_addr[16:2] - 15'd1),
+        .jvs_dump_rd_data(jvs_dump_rd_data),
+        .jvs_dump_hold(jvs_dump_hold),
+        .jvs_dump_restart_tgl(jvs_dump_restart_tgl),
+        .jvs_dump_entries(jvs_dump_entries),
+        .jvs_dump_full(jvs_dump_full),
+        .jvs_dump_ring(jvs_dump_auto_done),       // init saved: ring buffer for the Start button
+        .jvs_sniff_ring(jvs_sniff_auto_done),     // same in sniffer mode
+        .jvs_dump_status(jvs_dump_status),
+        .jvs_dump_err(jvs_dump_err),
+        .jvs_sniffer_mode(jvs_sniffer_mode),
 
         //Video Y/C Encoder interface
         .CHROMA_PHASE_INC(CHROMA_PHASE_INC),

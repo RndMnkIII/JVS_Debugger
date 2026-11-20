@@ -39,18 +39,102 @@ module osd_top #(
     input logic [7:0]  wr_data,
     input logic        wr_en,
 
-    //gun interface x,y,trigger
-    input logic gun_trigger,
-    input logic [11:0] gun_x,
-    input logic [11:0] gun_y,
+    //gun interface, one crosshair per player (P1..P4): player p at [p] / [p*12 +: 12]
+    input logic [3:0]  gun_trigger,
+    input logic [47:0] gun_x,
+    input logic [47:0] gun_y,
+    input logic [3:0]  gun_enable,   // draw the crosshair of the player (gun players only)
     
     //gpio output value for recoil display
     input logic [7:0] gpio_output_value,
     
     //snac io signals for display
     input logic snac_io3,
-    input logic snac_in7
+    input logic snac_in7,
+    //JVS line activity (stretched pulses) for the TX/RX indicators
+    input logic jvs_tx_activity,
+    input logic jvs_rx_activity,
+
+    //analog display: X/Y gauges (rows 26/27) and X/Y target (cols 33..38, rows 22..27)
+    input logic        ana_has_x,
+    input logic        ana_has_y,
+    input logic [15:0] ana_x,
+    input logic [15:0] ana_y
 );
+
+    //-------------------------------------------------------------------------
+    // Analog overlay geometry (pixels, 8x8 character cells)
+    //-------------------------------------------------------------------------
+    localparam int GAUGE_X0  = 48;            // col 6
+    localparam int GAUGE_X1  = 207;           // col 25 (160 px wide)
+    localparam int GAUGE_XC  = 127;           // gauge center
+    localparam int GAUGE_Y_X = 208;           // row 26: X gauge
+    localparam int GAUGE_Y_Y = 216;           // row 27: Y gauge
+    localparam int TGT_X0    = 264;           // col 33
+    localparam int TGT_X1    = 311;           // col 38 (48 px)
+    localparam int TGT_Y0    = 176;           // row 22
+    localparam int TGT_Y1    = 223;           // row 27 (48 px)
+    localparam int TGT_XC    = 288;
+    localparam int TGT_YC    = 200;
+
+    localparam logic [23:0] COL_TRACK  = 24'h5A6270;
+    localparam logic [23:0] COL_CENTER = 24'h9474FF;
+    localparam logic [23:0] COL_CURSOR = 24'hFFC300;
+    localparam logic [23:0] COL_FRAME  = 24'h2EA8FF;
+    localparam logic [23:0] COL_AXIS   = 24'h806000;
+
+    // Cursor positions (registered): gauge = x0 + v*160/65536, target = x0 + v*48/65536
+    // Values are sampled once per frame (during vblank) so that a value change
+    // in the middle of the frame does not tear the gauges / target.
+    logic [11:0] gauge_cx, gauge_cy, tgt_px, tgt_py;
+    logic        ana_has_x_r, ana_has_y_r;
+    always_ff @(posedge clk) begin
+        if (vblank) begin
+            gauge_cx    <= 12'(GAUGE_X0) + 12'((20'(ana_x) * 20'd10) >> 12);
+            gauge_cy    <= 12'(GAUGE_X0) + 12'((20'(ana_y) * 20'd10) >> 12);
+            tgt_px      <= 12'(TGT_X0)   + 12'((18'(ana_x) * 18'd3)  >> 12);
+            tgt_py      <= 12'(TGT_Y0)   + 12'((18'(ana_y) * 18'd3)  >> 12);
+            ana_has_x_r <= ana_has_x;
+            ana_has_y_r <= ana_has_y;
+        end
+    end
+
+    // Returns 1 and a color when (x,y) is on a gauge drawn on the cell row starting at y0
+    function automatic logic gauge_pix(input logic [11:0] x, input logic [11:0] y, input int y0,
+                                       input logic [11:0] cur, output logic [23:0] col);
+        gauge_pix = 1'b0;
+        col = COL_TRACK;
+        if (x >= GAUGE_X0 && x <= GAUGE_X1 && y >= y0 && y < y0 + 8) begin
+            if (x + 1 >= cur && x <= cur + 1) begin
+                gauge_pix = 1'b1; col = COL_CURSOR;                      // cursor (3 px)
+            end else if ((x == GAUGE_XC || x == GAUGE_XC + 1) && y > y0 && y < y0 + 7) begin
+                gauge_pix = 1'b1; col = COL_CENTER;                      // center tick
+            end else if ((x == GAUGE_X0 || x == GAUGE_X1) && y > y0 && y < y0 + 7) begin
+                gauge_pix = 1'b1; col = COL_TRACK;                       // end caps
+            end else if (y == y0 + 3 || y == y0 + 4) begin
+                gauge_pix = 1'b1; col = COL_TRACK;                       // track
+            end
+        end
+    endfunction
+
+    // X/Y target: frame, dotted center axes, X/Y decomposition lines and dot
+    function automatic logic target_pix(input logic [11:0] x, input logic [11:0] y,
+                                        input logic [11:0] px, input logic [11:0] py,
+                                        output logic [23:0] col);
+        target_pix = 1'b0;
+        col = COL_FRAME;
+        if (x >= TGT_X0 && x <= TGT_X1 && y >= TGT_Y0 && y <= TGT_Y1) begin
+            if (x + 1 >= px && x <= px + 1 && y + 1 >= py && y <= py + 1) begin
+                target_pix = 1'b1; col = COL_CURSOR;                     // position dot (3x3)
+            end else if (x == TGT_X0 || x == TGT_X1 || y == TGT_Y0 || y == TGT_Y1) begin
+                target_pix = 1'b1; col = COL_FRAME;                      // frame
+            end else if (x == px || y == py) begin
+                target_pix = 1'b1; col = COL_AXIS;                       // X / Y decomposition
+            end else if ((x == TGT_XC && !y[0]) || (y == TGT_YC && !x[0])) begin
+                target_pix = 1'b1; col = COL_TRACK;                      // dotted center axes
+            end
+        end
+    endfunction
 
   // RAM de caracteres compartida
   logic [10:0] char_rd_addr;
@@ -171,39 +255,118 @@ module osd_top #(
         end
     endfunction
 
-    logic hit_x, hit_y, gun_trigger_d;
-    logic [11:0] gun_xr, gun_yr, x_pixr, y_pixr;   // <-- 12 bits
+    logic [3:0]  hit_x, hit_y, gun_trigger_d;
+    logic [11:0] gun_xr [4], gun_yr [4];
+    logic [11:0] x_pixr, y_pixr;   // <-- 12 bits
+    // crosshair color of each player (red while its trigger is pressed)
+    localparam logic [23:0] GUN_COL [4] = '{24'h00FF00,    // P1 green
+                                           24'h00C0FF,    // P2 cyan
+                                           24'hFFD000,    // P3 yellow
+                                           24'hFF40FF};   // P4 magenta
+    logic        cross_hit;
+    logic [23:0] cross_col;
+    always_comb begin
+        cross_hit = 1'b0;
+        cross_col = 24'h000000;
+        for (int p = 3; p >= 0; p--)            // P1 drawn on top
+            if (gun_enable[p] && ((hit_x[p] && y_pixr == gun_yr[p]) || (hit_y[p] && x_pixr == gun_xr[p]))) begin
+                cross_hit = 1'b1;
+                cross_col = gun_trigger_d[p] ? 24'hFF0000 : GUN_COL[p];
+            end
+    end
     localparam int GUN_CROSS_SIZE = 4;
+
+    //-------------------------------------------------------------------------
+    // Status indicators, row 11: "o SETUP   o LINK   o TX   o RX   o OUT"
+    // (labels in JVS_RAM.mem, circles drawn here so they update in real time)
+    // Filled circle = active, gray ring = inactive. SETUP / LINK follow the adapter LEDs
+    // (lit when the open collector comparator output IN7 / IO3 is low).
+    //-------------------------------------------------------------------------
+    localparam int IND_Y0 = 88;                              // row 11
+    localparam int IND_N  = 5;
+    localparam int IND_X0 [IND_N] = '{16, 88, 152, 200, 248}; // cols 2, 11, 19, 25, 31
+    localparam logic [23:0] IND_COL [IND_N] = '{24'hFF8000,   // SETUP orange
+                                                24'h40FF40,   // LINK  green
+                                                24'hFFC300,   // TX    yellow
+                                                24'h00E5FF,   // RX    cyan
+                                                24'hFF4040};  // OUT   red
+    localparam logic [6:0] RING [7] = '{7'b0011100, 7'b0100010, 7'b1000001, 7'b1000001,
+                                        7'b1000001, 7'b0100010, 7'b0011100};
+    localparam logic [6:0] DISK [7] = '{7'b0011100, 7'b0111110, 7'b1111111, 7'b1111111,
+                                        7'b1111111, 7'b0111110, 7'b0011100};
+    logic [IND_N-1:0] ind_active;
+    logic             ind_hit;
+    logic [23:0]      ind_col;
+    always_comb begin
+        logic [11:0] lx, ly;
+        ind_active = {gpio_output_value != 8'h00, jvs_rx_activity, jvs_tx_activity, ~snac_io3, ~snac_in7};
+        ind_hit = 1'b0;
+        ind_col = 24'h5A6270;
+        ly = y_pixr - 12'(IND_Y0);
+        if (y_pixr >= IND_Y0 && y_pixr < IND_Y0 + 7) begin
+            for (int i = 0; i < IND_N; i++) begin
+                lx = x_pixr - 12'(IND_X0[i]);
+                if (x_pixr >= IND_X0[i] && x_pixr < IND_X0[i] + 7) begin
+                    if (ind_active[i] ? DISK[ly][6 - lx] : RING[ly][6 - lx]) begin
+                        ind_hit = 1'b1;
+                        ind_col = ind_active[i] ? IND_COL[i] : 24'h5A6270;
+                    end
+                end
+            end
+        end
+    end
+
+    // Double border around the recoil mode gun icon (4 x 2 cells at row 4, col 29 of the JVS
+    // debugger OSD): the target to shoot to toggle single / automatic recoil
+    localparam int ICON_X0 = 29*8, ICON_X1 = 29*8 + 31, ICON_Y0 = 4*8, ICON_Y1 = 4*8 + 15;
+    function automatic logic on_rect(input logic [11:0] x, y, input int l, t, r, b);
+        on_rect = (((x == l) || (x == r)) && (y >= t) && (y <= b)) ||
+                  (((y == t) || (y == b)) && (x >= l) && (x <= r));
+    endfunction
+    wire icon_border = on_rect(x_pixr, y_pixr, ICON_X0 - 3, ICON_Y0 - 3, ICON_X1 + 3, ICON_Y1 + 3) ||
+                       on_rect(x_pixr, y_pixr, ICON_X0 - 5, ICON_Y0 - 5, ICON_X1 + 5, ICON_Y1 + 5);
+
+    logic        gauge_hit_x, gauge_hit_y, target_hit;
+    logic [23:0] gauge_col_x, gauge_col_y, target_col;
+    always_comb begin
+        gauge_hit_x = gauge_pix(x_pixr, y_pixr, GAUGE_Y_X, gauge_cx, gauge_col_x);
+        gauge_hit_y = gauge_pix(x_pixr, y_pixr, GAUGE_Y_Y, gauge_cy, gauge_col_y);
+        target_hit  = target_pix(x_pixr, y_pixr, tgt_px, tgt_py, target_col);
+    end
 
     always_ff @(posedge clk) begin
         if(pixel_ce) begin
-            hit_x <= is_around(x_pix, gun_x, GUN_CROSS_SIZE, 319);
-            hit_y <= is_around(y_pix, gun_y, GUN_CROSS_SIZE, 239);
-            gun_xr <= gun_x;
-            gun_yr <= gun_y;
+            for (int p = 0; p < 4; p++) begin
+                hit_x[p]  <= is_around(x_pix, gun_x[p*12 +: 12], GUN_CROSS_SIZE, 319);
+                hit_y[p]  <= is_around(y_pix, gun_y[p*12 +: 12], GUN_CROSS_SIZE, 239);
+                gun_xr[p] <= gun_x[p*12 +: 12];
+                gun_yr[p] <= gun_y[p*12 +: 12];
+            end
             x_pixr <= x_pix;
             y_pixr <= y_pix;
             gun_trigger_d <= gun_trigger;
 
 
-            // Display GPIO output value in top-left corner
-            if (x_pixr < 80 && y_pixr < 16 && gpio_output_value != 8'h00) begin
-                {R_out, G_out, B_out} <= {8'hFF, 8'hFF, 8'h00}; // Yellow for active GPIO
+            // Status indicators (SETUP, LINK, TX, RX, OUT) on row 11
+            if (ind_hit) begin
+                {R_out, G_out, B_out} <= ind_col;
             end
-            // Display IO3 signal in top-left corner (second line)
-            else if (x_pixr < 80 && y_pixr >= 16 && y_pixr < 32 && snac_io3) begin
-                {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; // Red for IO3 active
+            // Analog X / Y gauges and X/Y target
+            else if (ana_has_x_r && gauge_hit_x) begin
+                {R_out, G_out, B_out} <= gauge_col_x;
             end
-            // Display IN7 signal in top-left corner (third line)
-            else if (x_pixr < 80 && y_pixr >= 32 && y_pixr < 48 && snac_in7) begin
-                {R_out, G_out, B_out} <= {8'hFF, 8'h80, 8'h00}; // Orange for IN7 active
+            else if (ana_has_y_r && gauge_hit_y) begin
+                {R_out, G_out, B_out} <= gauge_col_y;
+            end
+            else if (ana_has_x_r && ana_has_y_r && target_hit) begin
+                {R_out, G_out, B_out} <= target_col;
             end
             //if((hit_x && !hit_y) || (!hit_x && hit_y)) begin //crosslines
-            else if((hit_x && y_pixr == gun_yr) || (hit_y && x_pixr == gun_xr)) begin //crosshair
-                if(gun_trigger_d)
-                    {R_out, G_out, B_out} <= {8'hFF, 8'h00, 8'h00}; //red
-                else
-                    {R_out, G_out, B_out} <= {8'h00, 8'hFF, 8'h00}; //green
+            else if (cross_hit) begin                  // gun crosshairs, one color per player
+                {R_out, G_out, B_out} <= cross_col;
+            end
+            else if (osd_active && icon_border) begin
+                {R_out, G_out, B_out} <= COL_FRAME;
             end
             else
                 {R_out, G_out, B_out} <= (video_osd[24] == 1'b0) ? video_osd[23:0] : (osd_active ? {Rgrayout,Ggrayout,Bgrayout} :{R_d2, G_d2, B_d2});
